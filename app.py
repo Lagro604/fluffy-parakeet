@@ -11,9 +11,10 @@ app = Flask(__name__)
 # 환경 변수에서 설정
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
-BITCOIN_ORDERBOOK_THRESHOLD = 3000000000  # 30억 원
+BITCOIN_TRADE_AMOUNT = 0.1
 TRADE_THRESHOLD = 20000000  # 2천만 원
 EXCLUDED_TRADE_THRESHOLD = 70000000  # 7천만 원
+BITCOIN_ORDERBOOK_THRESHOLD = 3000000000  # 30억 원
 EXCLUDED_COINS = ['KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE', 'KRW-USDT', 'KRW-XRP']
 recent_messages = set()  # 최근 메시지 중복 방지
 logging.basicConfig(level=logging.DEBUG)  # 로그 레벨 설정
@@ -107,7 +108,7 @@ async def monitor_market():
                         yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
                         change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
 
-                        message = f"매수 알림: {market_id} ({coin_name})\n최근 거래 중 체결된 금액이 {format_krw(trade_value)} 이상입니다.\n현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
+                        message = f"매수 알림: {market_id} ({coin_name})\n최근 거래 중 {format_krw(trade_value)}가 매수되었습니다.\n현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
                         msg_id = hashlib.md5(message.encode()).hexdigest()
                         if msg_id not in recent_messages:
                             await send_telegram_message(message)
@@ -119,7 +120,7 @@ async def monitor_market():
                         yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
                         change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
 
-                        message = f"제외 코인 매수 알림: {market_id} ({coin_name})\n최근 거래 중 체결된 금액이 {format_krw(trade_value)} 이상입니다.\n현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
+                        message = f"제외 코인 매수 알림: {market_id} ({coin_name})\n최근 거래 중 {format_krw(trade_value)}가 매수되었습니다.\n현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
                         msg_id = hashlib.md5(message.encode()).hexdigest()
                         if msg_id not in recent_messages:
                             await send_telegram_message(message)
