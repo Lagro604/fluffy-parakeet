@@ -199,7 +199,8 @@ if __name__ == '__main__':
         # 비동기 루프를 새로운 스레드에서 실행
         threading.Thread(target=run_asyncio_loop, daemon=True).start()
         # Railway에서 사용할 포트 설정
-        port = int(os.environ.get('PORT', 5000))
-        app.run(host='0.0.0.0', port=port)
+        port = int(os.environ.get('PORT', 5000))  # PORT 환경 변수 사용
+        app.run(host='0.0.0.0', port=port)  # 포트 변경
     except Exception as e:
         logging.error(f"Failed to start the application: {e}")
+
