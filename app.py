@@ -1,81 +1,75 @@
-import aiohttp
-import asyncio
-import threading
-import logging
-import hashlib
 import os
-import sys
-import traceback
-from telegram import Bot
+import hashlib
+import asyncio
+import logging
+import httpx
 from flask import Flask, request
-from dotenv import load_dotenv
-from flask_cors import CORS
 
-load_dotenv()
-
-# 로깅 설정
-logging.basicConfig(level=logging.DEBUG)
-
-# Flask 애플리케이션 초기화
 app = Flask(__name__)
-CORS(app)
 
-# 텔레그램 봇 설정
+# 환경 변수에서 설정
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-CHAT_ID = os.getenv('CHAT_ID') 
-bot = Bot(token=TELEGRAM_TOKEN)
+CHAT_ID = os.getenv('CHAT_ID')
+BITCOIN_TRADE_AMOUNT = 0.1
+TRADE_THRESHOLD = 100000
+EXCLUDED_COINS = ['KRW-BTC']  # 예외로 처리할 코인
+recent_messages = set()  # 최근 메시지 중복 방지
+logging.basicConfig(level=logging.DEBUG)  # 로그 레벨 설정
 
-# 제외할 코인 리스트
-EXCLUDED_COINS = ["KRW-SOL", "KRW-ETH", "KRW-SHIB", "KRW-DOGE", "KRW-USDT", "KRW-XRP"]
-
-# 기준
-TRADE_THRESHOLD = 20_000_000  # 2000만원
-HIGH_TRADE_THRESHOLD = 70_000_000  # 7000만원
-BITCOIN_TRADE_AMOUNT = 50  # 비트코인 수량 기준
-
-# 최근 메시지 기록
-recent_messages = set()
-
-# 비동기 메시지 전송 함수
 async def send_telegram_message(message):
-    logging.info(f"Sending message to {CHAT_ID}: {message}")  
-    await bot.send_message(chat_id=CHAT_ID, text=message)
-
-# Upbit API 호출 함수
-async def fetch(url):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            return await response.json()
+    url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
+    payload = {'chat_id': CHAT_ID, 'text': message}
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload)
+        if response.status_code != 200:
+            logging.error(f'Error sending message: {response.text}')
 
 async def get_orderbook(market_id):
     url = f'https://api.upbit.com/v1/orderbook?markets={market_id}'
-    return await fetch(url)
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        if response.status_code == 200:
+            return response.json()
+        logging.error(f'Error fetching orderbook for {market_id}: {response.text}')
+        return None
 
 async def get_recent_trades(market_id):
-    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=50'
-    return await fetch(url)
+    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=5'
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        if response.status_code == 200:
+            return response.json()
+        logging.error(f'Error fetching recent trades for {market_id}: {response.text}')
+        return None
 
 async def get_ticker(market_id):
     url = f'https://api.upbit.com/v1/ticker?markets={market_id}'
-    return await fetch(url)
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        if response.status_code == 200:
+            return response.json()
+        logging.error(f'Error fetching ticker for {market_id}: {response.text}')
+        return None
 
 async def get_coin_names():
-    url = 'https://api.upbit.com/v1/market/all?is_open=true&market=KRW'
-    markets = await fetch(url)
-    return {market['market']: market['korean_name'] for market in markets if isinstance(market, dict)}
-
-# 거래 금액 포맷 함수
-def format_krw(value):
-    return f"{value:,.0f} 원"
+    url = 'https://api.upbit.com/v1/market/all'
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        if response.status_code == 200:
+            return {coin['market']: coin['korean_name'] for coin in response.json()}
+        logging.error(f'Error fetching coin names: {response.text}')
+        return {}
 
 async def monitor_market():
     COIN_NAMES = await get_coin_names()
-    logging.info("Monitoring market started.")
+    logging.info("Monitoring market started.")  # 모니터링 시작 로그 추가
 
     while True:
+        logging.debug("Checking markets...")  # 루프 시작 로그 추가
         for market_id, coin_name in COIN_NAMES.items():
             if market_id == "KRW-BTC":
                 orderbook_data = await get_orderbook(market_id)
+                logging.debug(f"Orderbook data for {market_id}: {orderbook_data}")  # 주문서 데이터 로그 추가
                 if orderbook_data and isinstance(orderbook_data, list) and len(orderbook_data) > 0:
                     ask_units = orderbook_data[0].get('orderbook_units', [])
                     if ask_units:
@@ -99,6 +93,7 @@ async def monitor_market():
                 continue
 
             recent_trades = await get_recent_trades(market_id)
+            logging.debug(f"Recent trades for {market_id}: {recent_trades}")  # 최근 거래 로그 추가
             if isinstance(recent_trades, list) and recent_trades:
                 trade_found = any(trade['total_value'] >= TRADE_THRESHOLD for trade in recent_trades)
 
@@ -115,18 +110,11 @@ async def monitor_market():
                         await send_telegram_message(message)
                         recent_messages.add(msg_id)
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(10)  # 10초 대기
 
-# 비동기 루프 실행 함수
-def run_asyncio_loop():
-    asyncio.run(monitor_market())
-
-# Flask 라우트
 @app.route('/')
 def index():
-    return "Server is running!"
+    return "Hello, World!"
 
-# 서버 실행
 if __name__ == '__main__':
-    threading.Thread(target=run_asyncio_loop).start()
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+    asyncio.run(monitor_market())
