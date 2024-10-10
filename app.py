@@ -4,7 +4,6 @@ import asyncio
 import logging
 import httpx
 from flask import Flask, request
-import threading
 
 app = Flask(__name__)
 
@@ -120,7 +119,11 @@ async def monitor_market():
 def index():
     return "Hello, World!"
 
-if __name__ == '__main__':
-    threading.Thread(target=asyncio.run, args=(monitor_market(),), daemon=True).start()
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+@app.before_serving
+async def startup():
+    app.background_task = asyncio.create_task(monitor_market())
+
+@app.after_serving
+async def shutdown():
+    app.background_task.cancel()
+    await app.background_task
