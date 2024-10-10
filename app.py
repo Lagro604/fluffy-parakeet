@@ -11,10 +11,9 @@ app = Flask(__name__)
 # 환경 변수에서 설정
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
-BITCOIN_TRADE_AMOUNT = 0.1
+BITCOIN_ORDERBOOK_THRESHOLD = 3000000000  # 30억 원
 TRADE_THRESHOLD = 20000000  # 2천만 원
 EXCLUDED_TRADE_THRESHOLD = 70000000  # 7천만 원
-BITCOIN_ORDERBOOK_THRESHOLD = 3000000000  # 30억 원
 EXCLUDED_COINS = ['KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE', 'KRW-USDT', 'KRW-XRP']
 recent_messages = set()  # 최근 메시지 중복 방지
 logging.basicConfig(level=logging.DEBUG)  # 로그 레벨 설정
@@ -37,7 +36,7 @@ async def get_orderbook(market_id):
         return None
 
 async def get_recent_trades(market_id):
-    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=1'  # 최근 거래 1개만 요청
+    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=10'  # 최근 거래 10개 요청
     async with httpx.AsyncClient() as client:
         response = await client.get(url)
         if response.status_code == 200:
