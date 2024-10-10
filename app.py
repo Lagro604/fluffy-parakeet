@@ -11,7 +11,6 @@ app = Flask(__name__)
 # 환경 변수에서 설정
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
-BITCOIN_TRADE_AMOUNT = 0.1
 TRADE_THRESHOLD = 20000000  # 2천만 원
 EXCLUDED_TRADE_THRESHOLD = 70000000  # 7천만 원
 BITCOIN_ORDERBOOK_THRESHOLD = 3000000000  # 30억 원
@@ -37,7 +36,7 @@ async def get_orderbook(market_id):
         return None
 
 async def get_recent_trades(market_id):
-    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=10'  # 최근 거래 10개 요청
+    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=15'  # 최근 거래 10개 요청
     async with httpx.AsyncClient() as client:
         response = await client.get(url)
         if response.status_code == 200:
@@ -88,7 +87,10 @@ async def monitor_market():
                             yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
                             change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
 
-                            message = f"비트코인 알림: {market_id} ({coin_name})\n현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
+                            message = (
+                                f"비트코인 알림: {market_id} ({coin_name})\n"
+                                f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
+                            )
                             msg_id = hashlib.md5(message.encode()).hexdigest()
                             if msg_id not in recent_messages:
                                 await send_telegram_message(message)
@@ -99,8 +101,12 @@ async def monitor_market():
             recent_trades = await get_recent_trades(market_id)
             logging.debug(f"Recent trades for {market_id}: {recent_trades}")
             if isinstance(recent_trades, list) and recent_trades:
+                total_trade_value = 0
+
                 for trade in recent_trades:
                     trade_value = trade['trade_price'] * trade['trade_volume']
+                    total_trade_value += trade_value
+                    trade_type = "매수" if trade['ask_bid'] == "BID" else "매도"
 
                     if trade_value >= TRADE_THRESHOLD and market_id not in EXCLUDED_COINS:
                         ticker_data = await get_ticker(market_id)
@@ -108,7 +114,12 @@ async def monitor_market():
                         yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
                         change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
 
-                        message = f"매수 알림: {market_id} ({coin_name})\n최근 거래 중 {format_krw(trade_value)}가 매수되었습니다.\n현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
+                        message = (
+                            f"{trade_type} 알림: {market_id} ({coin_name})\n"
+                            f"최근 거래: {format_krw(trade_value)}\n"
+                            f"총 체결 금액: {format_krw(total_trade_value)}\n"
+                            f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
+                        )
                         msg_id = hashlib.md5(message.encode()).hexdigest()
                         if msg_id not in recent_messages:
                             await send_telegram_message(message)
@@ -120,7 +131,12 @@ async def monitor_market():
                         yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
                         change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
 
-                        message = f"제외 코인 매수 알림: {market_id} ({coin_name})\n최근 거래 중 {format_krw(trade_value)}가 매수되었습니다.\n현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
+                        message = (
+                            f"{trade_type} 알림 (제외 코인): {market_id} ({coin_name})\n"
+                            f"최근 거래: {format_krw(trade_value)}\n"
+                            f"총 체결 금액: {format_krw(total_trade_value)}\n"
+                            f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
+                        )
                         msg_id = hashlib.md5(message.encode()).hexdigest()
                         if msg_id not in recent_messages:
                             await send_telegram_message(message)
