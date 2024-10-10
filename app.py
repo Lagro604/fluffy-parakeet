@@ -32,7 +32,7 @@ CORS(app)
 
 # 텔레그램 봇 설정
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-CHAT_ID = os.getenv('CHAT_ID')
+CHAT_ID = os.getenv('CHAT_ID') 
 bot = Bot(token=TELEGRAM_TOKEN)
 
 # 제외할 코인 리스트
@@ -199,5 +199,7 @@ if __name__ == '__main__':
         # 비동기 루프를 새로운 스레드에서 실행
         threading.Thread(target=run_asyncio_loop, daemon=True).start()
         # Railway에서 사용할 포트 설정
-        port = int(os.environ.get('PORT', 8080))  # Railway의 기본 포트
+        port = int(os.environ.get('PORT', 5000))
         app.run(host='0.0.0.0', port=port)
+    except Exception as e:
+        logging.error(f"Failed to start the application: {e}")
