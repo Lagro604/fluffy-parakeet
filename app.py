@@ -4,6 +4,7 @@ import asyncio
 import logging
 import httpx
 from flask import Flask, request
+from threading import Thread
 
 app = Flask(__name__)
 
@@ -115,15 +116,13 @@ async def monitor_market():
 
         await asyncio.sleep(10)  # 10초 대기
 
+def run_async_monitor():
+    asyncio.run(monitor_market())
+
 @app.route('/')
 def index():
     return "Hello, World!"
 
-@app.before_serving
-async def startup():
-    app.background_task = asyncio.create_task(monitor_market())
-
-@app.after_serving
-async def shutdown():
-    app.background_task.cancel()
-    await app.background_task
+# 애플리케이션 시작 시 백그라운드 태스크 실행
+background_thread = Thread(target=run_async_monitor)
+background_thread.start()
