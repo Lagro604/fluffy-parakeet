@@ -189,4 +189,15 @@ def index():
 @app.route('/test')
 def test():
     try:
-        # 여기에 테스트용
+        return 'Test route is working!'
+    except Exception as e:
+        logging.error(f"Error occurred: {e}")
+        return f"Error occurred: {e}", 500
+
+if __name__ == '__main__':
+    try:
+        # 비동기 루프를 새로운 스레드에서 실행
+        threading.Thread(target=run_asyncio_loop, daemon=True).start()
+        app.run(host='0.0.0.0', port=int(os.getenv("PORT", 8080)))  # PORT 환경 변수 사용
+    except Exception as e:
+        logging.error(f"Failed to start the application: {e}")
