@@ -4,6 +4,7 @@ import asyncio
 import logging
 import httpx
 from flask import Flask, request
+import threading
 
 app = Flask(__name__)
 
@@ -60,6 +61,9 @@ async def get_coin_names():
         logging.error(f'Error fetching coin names: {response.text}')
         return {}
 
+def format_krw(value):
+    return f"{value:,.0f}원"
+
 async def monitor_market():
     COIN_NAMES = await get_coin_names()
     logging.info("Monitoring market started.")  # 모니터링 시작 로그 추가
@@ -95,7 +99,7 @@ async def monitor_market():
             recent_trades = await get_recent_trades(market_id)
             logging.debug(f"Recent trades for {market_id}: {recent_trades}")  # 최근 거래 로그 추가
             if isinstance(recent_trades, list) and recent_trades:
-                trade_found = any(trade['total_value'] >= TRADE_THRESHOLD for trade in recent_trades)
+                trade_found = any(trade['trade_price'] * trade['trade_volume'] >= TRADE_THRESHOLD for trade in recent_trades)
 
                 ticker_data = await get_ticker(market_id)
                 current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else 0
@@ -103,7 +107,7 @@ async def monitor_market():
                 change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
 
                 if market_id not in EXCLUDED_COINS and trade_found:
-                    total_trade_value = sum(trade['total_value'] for trade in recent_trades if trade['total_value'] >= TRADE_THRESHOLD)
+                    total_trade_value = sum(trade['trade_price'] * trade['trade_volume'] for trade in recent_trades if trade['trade_price'] * trade['trade_volume'] >= TRADE_THRESHOLD)
                     message = f"매수 알림: {market_id} ({coin_name})\n최근 거래 중 총 체결 금액이 {format_krw(total_trade_value)}으로 매수 체결되었습니다.\n현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
                     msg_id = hashlib.md5(message.encode()).hexdigest()
                     if msg_id not in recent_messages:
@@ -117,4 +121,6 @@ def index():
     return "Hello, World!"
 
 if __name__ == '__main__':
-    asyncio.run(monitor_market())
+    threading.Thread(target=asyncio.run, args=(monitor_market(),), daemon=True).start()
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
