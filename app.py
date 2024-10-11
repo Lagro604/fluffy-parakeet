@@ -16,7 +16,8 @@ TRADE_THRESHOLD = 20000000  # 2천만 원
 EXCLUDED_TRADE_THRESHOLD = 70000000  # 7천만 원
 BITCOIN_ORDERBOOK_THRESHOLD = 3000000000  # 30억 원
 EXCLUDED_COINS = ['KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE', 'KRW-USDT', 'KRW-XRP']
-recent_messages = set()  # 최근 메시지 중복 방지
+recent_messages = {}  # 해시 값과 시간을 저장하는 딕셔너리
+TTL = 10800  # 해시 값의 유효 기간을 1시간(3600초)로 설정
 logging.basicConfig(level=logging.DEBUG)  # 로그 레벨 설정
 
 async def send_telegram_message(message):
@@ -71,6 +72,13 @@ async def monitor_market():
     logging.info("Monitoring market started.")
 
     while True:
+        current_time = datetime.now().timestamp()  # 현재 시간 (초 단위)
+        
+        # 오래된 해시 값 제거 (TTL 기반)
+        expired_msgs = [msg_id for msg_id, added_time in recent_messages.items() if current_time - added_time > TTL]
+        for msg_id in expired_msgs:
+            del recent_messages[msg_id]  # 오래된 해시 값 삭제
+        
         logging.debug("Checking markets...")
         for market_id, coin_name in COIN_NAMES.items():
             if market_id == "KRW-BTC":
@@ -85,7 +93,7 @@ async def monitor_market():
                         if ask_size >= BITCOIN_ORDERBOOK_THRESHOLD or bid_size >= BITCOIN_ORDERBOOK_THRESHOLD:
                             ticker_data = await get_ticker(market_id)
                             current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                            yesterday_price = ticker_data[0]['prev_closing_price'] if ticker 데이터가 있고 ticker 데이터가 list인 경우 else 0
+                            yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
                             change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
 
                             message = (
@@ -95,7 +103,7 @@ async def monitor_market():
                             msg_id = hashlib.md5(message.encode()).hexdigest()
                             if msg_id not in recent_messages:
                                 await send_telegram_message(message)
-                                recent_messages.add(msg_id)
+                                recent_messages[msg_id] = current_time  # 현재 시간을 저장
 
                 continue
 
@@ -123,12 +131,12 @@ async def monitor_market():
                     if trade_value >= TRADE_THRESHOLD and market_id not in EXCLUDED_COINS:
                         ticker_data = await get_ticker(market_id)
                         current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                        yesterday_price = ticker_data[0]['prev_closing_price'] if ticker 데이터가 있고 ticker 데이터가 list인 경우 else 0
+                        yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
                         change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
 
                         message = (
                             f"{trade_type} 알림: {market_id} ({coin_name})\n"
-                            f"최근 거래: {format_krw(trade_value)} (거래 가격: {format_krw(trade['trade_price'])}원)\n"  # 거래 금액 옆에 거래 가격 추가
+                            f"최근 거래: {format_krw(trade_value)} (거래 가격: {format_krw(trade['trade_price'])}원)\n"
                             f"거래 시각: {trade_time}\n"
                             f"거래 ID: {trade_id}\n"
                             f"총 체결 금액: {format_krw(total_trade_value)}\n"
@@ -138,17 +146,17 @@ async def monitor_market():
                         msg_id = hashlib.md5(message.encode()).hexdigest()
                         if msg_id not in recent_messages:
                             await send_telegram_message(message)
-                            recent_messages.add(msg_id)
+                            recent_messages[msg_id] = current_time  # 현재 시간을 저장
 
                     elif trade_value >= EXCLUDED_TRADE_THRESHOLD and market_id in EXCLUDED_COINS:
                         ticker_data = await get_ticker(market_id)
-                        current_price = ticker_data[0]['trade_price'] if ticker 데이터가 있고 ticker 데이터가 list인 경우 else 0
-                        yesterday_price = ticker_data[0]['prev_closing_price'] if ticker 데이터가 있고 ticker 데이터가 list인 경우 else 0
+                        current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else 0
+                        yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
                         change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
 
                         message = (
                             f"{trade_type} 알림 (제외 코인): {market_id} ({coin_name})\n"
-                            f"최근 거래: {format_krw(trade_value)} (거래 가격: {format_krw(trade['trade_price'])}원)\n"  # 거래 금액 옆에 거래 가격 추가
+                            f"최근 거래: {format_krw(trade_value)} (거래 가격: {format_krw(trade['trade_price'])}원)\n"
                             f"거래 시각: {trade_time}\n"
                             f"거래 ID: {trade_id}\n"
                             f"총 체결 금액: {format_krw(total_trade_value)}\n"
@@ -158,9 +166,9 @@ async def monitor_market():
                         msg_id = hashlib.md5(message.encode()).hexdigest()
                         if msg_id not in recent_messages:
                             await send_telegram_message(message)
-                            recent_messages.add(msg_id)
+                            recent_messages[msg_id] = current_time  # 현재 시간을 저장
 
-        await asyncio.sleep(5)  # 10초 대기
+        await asyncio.sleep(10)  # 10초 대기
 
 def run_async_monitor():
     asyncio.run(monitor_market())
