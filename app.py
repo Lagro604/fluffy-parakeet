@@ -5,7 +5,6 @@ import logging
 import httpx
 from flask import Flask, request
 from threading import Thread
-from datetime import datetime
 
 app = Flask(__name__)
 
@@ -37,7 +36,7 @@ async def get_orderbook(market_id):
         return None
 
 async def get_recent_trades(market_id):
-    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=15'  # 최근 거래 15개 요청
+    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=15'  # 최근 거래 10개 요청
     async with httpx.AsyncClient() as client:
         response = await client.get(url)
         if response.status_code == 200:
@@ -105,15 +104,9 @@ async def monitor_market():
                 total_trade_value = 0
 
                 for trade in recent_trades:
-                    logging.debug(f"Trade data structure: {trade.keys()}")
                     trade_value = trade['trade_price'] * trade['trade_volume']
                     total_trade_value += trade_value
                     trade_type = "매수" if trade['ask_bid'] == "BID" else "매도"
-
-                    # 거래 발생 시간을 가져와 메시지에 추가 (timestamp 사용)
-                    trade_time = datetime.fromtimestamp(trade.get('timestamp', 0) / 1000).strftime('%Y-%m-%d %H:%M:%S')
-                    # 거래 ID 또는 고유 식별자를 사용하여 메시지 중복 방지 강화
-                    trade_id = trade.get('sequential_id', trade.get('timestamp', 0))
 
                     if trade_value >= TRADE_THRESHOLD and market_id not in EXCLUDED_COINS:
                         ticker_data = await get_ticker(market_id)
@@ -123,13 +116,10 @@ async def monitor_market():
 
                         message = (
                             f"{trade_type} 알림: {market_id} ({coin_name})\n"
-                            f"최근 거래: {format_krw(trade_value)} ({format_krw(trade['trade_price'])}원)\n"
-                            f"거래 시각: {trade_time}\n"
-                            f"거래 ID: {trade_id}\n"
+                            f"최근 거래: {format_krw(trade_value)}\n"
                             f"총 체결 금액: {format_krw(total_trade_value)}\n"
                             f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
                         )
-
                         msg_id = hashlib.md5(message.encode()).hexdigest()
                         if msg_id not in recent_messages:
                             await send_telegram_message(message)
@@ -143,19 +133,16 @@ async def monitor_market():
 
                         message = (
                             f"{trade_type} 알림 (제외 코인): {market_id} ({coin_name})\n"
-                            f"최근 거래: {format_krw(trade_value)} ({format_krw(trade['trade_price'])}원)\n"
-                            f"거래 시각: {trade_time}\n"
-                            f"거래 ID: {trade_id}\n"
+                            f"최근 거래: {format_krw(trade_value)}\n"
                             f"총 체결 금액: {format_krw(total_trade_value)}\n"
                             f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
                         )
-
                         msg_id = hashlib.md5(message.encode()).hexdigest()
                         if msg_id not in recent_messages:
                             await send_telegram_message(message)
                             recent_messages.add(msg_id)
 
-        await asyncio.sleep(5)  # 5초 대기
+        await asyncio.sleep(10)  # 10초 대기
 
 def run_async_monitor():
     asyncio.run(monitor_market())
@@ -167,6 +154,3 @@ def index():
 # 애플리케이션 시작 시 백그라운드 태스크 실행
 background_thread = Thread(target=run_async_monitor)
 background_thread.start()
-
-if __name__ == "__main__":
-    app.run(debug=True, use_reloader=False)
