@@ -14,15 +14,15 @@ app = Flask(__name__)
 # 환경 변수에서 설정
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
-UPBIT_TRADE_THRESHOLD = 30000000  # 업비트 기본 3천만 원
+UPBIT_TRADE_THRESHOLD = 20000000  # 업비트 기본 3천만 원
 EXCLUDED_TRADE_THRESHOLD = 70000000  # 제외된 코인은 7천만 원
 EXCLUDED_COINS = ['KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE', 'KRW-USDT', 'KRW-XRP']
 recent_messages = {}  # 최근 메시지 중복 방지 (메시지 해시 값과 타임스탬프 저장)
-MESSAGE_EXPIRATION_TIME = 3600  # 1시간 (3600초) 후에 메시지 해시 값 삭제
+MESSAGE_EXPIRATION_TIME = 7200  # 1시간 (3600초) 후에 메시지 해시 값 삭제
 logging.basicConfig(level=logging.DEBUG)  # 로그 레벨 설정
 
 # 바이낸스 선물 상위 100개 구독용
-BINANCE_FUTURE_TRADE_THRESHOLD = 300000000  # 3억 원 기준
+BINANCE_FUTURE_TRADE_THRESHOLD = 200000000  # 3억 원 기준
 BINANCE_EXCLUDED_TRADE_THRESHOLD = 500000000  # 제외된 코인은 5억 원
 BINANCE_TOP_100_COINS = []  # 상위 100개 코인 목록
 
@@ -173,13 +173,17 @@ async def binance_websocket():
                     delete_old_hashes()  # 오래된 해시값 삭제
 
 def run_async_websocket():
-    # 업비트와 바이낸스 웹소켓을 병렬로 실행
-    asyncio.run(asyncio.gather(upbit_websocket(), binance_websocket()))
+    # 비동기 웹소켓 함수들을 메인 스레드에서 실행
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(asyncio.gather(upbit_websocket(), binance_websocket()))
 
 @app.route('/')
 def index():
     return "Hello, World!"
 
-# 애플리케이션 시작 시 백그라운드 태스크 실행
-background_thread = Thread(target=run_async_websocket)
-background_thread.start()
+# 애플리케이션 시작 시 백그라운드 태스크 시작
+if __name__ == '__main__':
+    thread = Thread(target=run_async_websocket)
+    thread.start()
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))  # Heroku에서는 환경변수 PORT 사용
