@@ -142,7 +142,7 @@ async def monitor_market():
                             await send_telegram_message(message)
                             recent_messages.add(msg_id)
 
-        await asyncio.sleep(5)  # 10초 대기
+        await asyncio.sleep(10)  # 10초 대기
 
 def run_async_monitor():
     asyncio.run(monitor_market())
