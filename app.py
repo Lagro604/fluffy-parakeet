@@ -16,15 +16,15 @@ app = Flask(__name__)
 # 환경 변수에서 설정
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
-UPBIT_TRADE_THRESHOLD = 20000000  # 업비트 기본 3천만 원
+UPBIT_TRADE_THRESHOLD = 20000000  # 업비트 기본 2천만 원
 EXCLUDED_TRADE_THRESHOLD = 70000000  # 제외된 코인은 7천만 원
 EXCLUDED_COINS = ['KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE', 'KRW-USDT', 'KRW-XRP']
 recent_messages = {}  # 최근 메시지 중복 방지 (메시지 해시 값과 타임스탬프 저장)
 MESSAGE_EXPIRATION_TIME = 7200  # 1시간 (3600초) 후에 메시지 해시 값 삭제
-logging.basicConfig(level=logging.DEBUG)  # 로그 레벨 설정
+logging.basicConfig(level=logging.INFO)  # 로그 레벨 설정
 
 # 바이낸스 선물 상위 100개 구독용
-BINANCE_FUTURE_TRADE_THRESHOLD = 200000000  # 3억 원 기준
+BINANCE_FUTURE_TRADE_THRESHOLD = 200000000  # 2억 원 기준
 BINANCE_EXCLUDED_TRADE_THRESHOLD = 500000000  # 제외된 코인은 5억 원
 BINANCE_TOP_100_COINS = []  # 상위 100개 코인 목록
 
@@ -171,25 +171,21 @@ async def binance_websocket():
                     msg_id = hashlib.md5(message.encode()).hexdigest()
                     if msg_id not in recent_messages:
                         await send_telegram_message(message)
-                        recent_messages[msg_id] = time()
-                    delete_old_hashes()  # 오래된 해시값 삭제
+                        recent_messages[msg_id] = time()  # 메시지 해시와 타임스탬프 저장
 
-def run_async_websocket():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(asyncio.gather(upbit_websocket(), binance_websocket()))
-
-@app.route('/')
-def index():
-    return "Hello, World!"
-
-@click.command(name='init_app')
+@app.cli.command("init_app")
 @with_appcontext
 def init_app():
-    thread = Thread(target=run_async_websocket)
-    thread.start()
+    """Flask 애플리케이션 초기화 및 웹소켓 스레드 시작"""
+    logging.info("Initializing app and starting WebSocket threads.")
+    loop = asyncio.get_event_loop()
 
-app.cli.add_command(init_app)
+    # 웹소켓 실행
+    loop.create_task(upbit_websocket())
+    loop.create_task(binance_websocket())
+    
+    # Flask 앱 실행
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), use_reloader=False)
 
-if __name__ == '__main__':
-    app.run()
+if __name__ == "__main__":
+    init_app()
