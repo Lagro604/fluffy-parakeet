@@ -21,7 +21,7 @@ UPBIT_TRADE_THRESHOLD = 20000000
 EXCLUDED_TRADE_THRESHOLD = 70000000
 EXCLUDED_COINS = ['KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE', 'KRW-USDT', 'KRW-XRP']
 BINANCE_FUTURE_TRADE_THRESHOLD = 200000000
-PORT = 5000
+PORT = int(os.getenv('PORT', 8080))
 
 recent_messages = {}
 MESSAGE_EXPIRATION_TIME = 7200
@@ -67,9 +67,9 @@ async def get_all_krw_coins():
 
 async def upbit_websocket():
     uri = "wss://api.upbit.com/websocket/v1"
-    
+   
     await get_all_krw_coins()
-    
+   
     subscribe_message = [
         {"ticket": "test"},
         {"type": "ticker", "codes": list(coin_name_dict.keys())},
@@ -167,7 +167,7 @@ async def process_binance_data(symbol_data):
 
     if trade_value >= BINANCE_FUTURE_TRADE_THRESHOLD:
         trade_type = "매수" if symbol_data['m'] else "매도"  # 'm'이 true이면 매수, false이면 매도
-        
+       
         message = (
             f"[바이낸스] {trade_type} 알림: {symbol} ({korean_name})\n"
             f"마크 가격: {mark_price:,.0f}원\n"
@@ -228,6 +228,12 @@ def start_websocket_thread():
     thread.daemon = True
     thread.start()
 
-if __name__ == '__main__':
+def create_app():
     start_websocket_thread()
-    app.run(host='0.0.0.0', port=PORT)
+    return app
+
+# Gunicorn용 앱 객체
+application = create_app()
+
+if __name__ == '__main__':
+    application.run(host='0.0.0.0', port=PORT)
