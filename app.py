@@ -14,23 +14,20 @@ app = Flask(__name__)
 # 환경 변수에서 설정
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
-UPBIT_TRADE_THRESHOLD = 20000000  # 업비트 기본 2억 원
-EXCLUDED_TRADE_THRESHOLD = 500000000  # 제외된 코인은 5억 원
+UPBIT_TRADE_THRESHOLD = 30000000  # 업비트 기본 3천만 원
+EXCLUDED_TRADE_THRESHOLD = 70000000  # 제외된 코인은 7천만 원
 EXCLUDED_COINS = ['KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE', 'KRW-USDT', 'KRW-XRP']
 recent_messages = {}  # 최근 메시지 중복 방지 (메시지 해시 값과 타임스탬프 저장)
 MESSAGE_EXPIRATION_TIME = 3600  # 1시간 (3600초) 후에 메시지 해시 값 삭제
 logging.basicConfig(level=logging.DEBUG)  # 로그 레벨 설정
 
 # 바이낸스 선물 상위 100개 구독용
-BINANCE_FUTURE_TRADE_THRESHOLD = 200000000  # 2억 원 기준
+BINANCE_FUTURE_TRADE_THRESHOLD = 300000000  # 3억 원 기준
+BINANCE_EXCLUDED_TRADE_THRESHOLD = 500000000  # 제외된 코인은 5억 원
 BINANCE_TOP_100_COINS = []  # 상위 100개 코인 목록
 
-# 코인 한글 이름을 저장하는 딕셔너리 (예시)
-coin_name_dict = {
-    'BTCUSDT': '비트코인',
-    'ETHUSDT': '이더리움',
-    # 필요한 경우 다른 코인도 여기에 추가
-}
+# 코인 한글 이름을 저장하는 딕셔너리
+coin_name_dict = {}
 
 async def send_telegram_message(message):
     url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
@@ -49,7 +46,6 @@ def delete_old_hashes():
         del recent_messages[key]
     logging.debug(f"Deleted {len(keys_to_delete)} old messages from recent_messages")
 
-### 업비트 웹소켓 코드
 async def get_all_krw_coins():
     """업비트의 모든 KRW 마켓 코인 리스트 가져오기"""
     url = 'https://api.upbit.com/v1/market/all'
@@ -57,7 +53,10 @@ async def get_all_krw_coins():
         response = await client.get(url)
         if response.status_code == 200:
             markets = response.json()
-            return {market['market']: market['korean_name'] for market in markets if market['market'].startswith('KRW-')}
+            for market in markets:
+                if market['market'].startswith('KRW-'):
+                    coin_name_dict[market['market']] = market['korean_name']
+            return coin_name_dict
         logging.error(f'Error fetching market data: {response.text}')
         return {}
 
@@ -65,13 +64,13 @@ async def upbit_websocket():
     uri = "wss://api.upbit.com/websocket/v1"
 
     # 모든 KRW 마켓 코인 구독
-    all_krw_coins = await get_all_krw_coins()
+    await get_all_krw_coins()
     
     # 티커와 체결 정보 구독
     subscribe_message = [
         {"ticket": "test"},
-        {"type": "ticker", "codes": list(all_krw_coins.keys())},  # 모든 KRW 코인에 대해 티커 구독
-        {"type": "trade", "codes": list(all_krw_coins.keys())}    # 모든 KRW 코인에 대해 체결 구독
+        {"type": "ticker", "codes": list(coin_name_dict.keys())},  # 모든 KRW 코인에 대해 티커 구독
+        {"type": "trade", "codes": list(coin_name_dict.keys())}    # 모든 KRW 코인에 대해 체결 구독
     ]
 
     reconnect_attempts = 0  # 재연결 시도 횟수
@@ -94,7 +93,7 @@ async def upbit_websocket():
                     # 티커 데이터 처리 (가격 변화)
                     if data['type'] == 'ticker':
                         market = data['code']
-                        korean_name = all_krw_coins.get(market, '알 수 없음')
+                        korean_name = coin_name_dict.get(market, '알 수 없음')
                         current_price = data['trade_price']
                         change_rate = data['signed_change_rate'] * 100  # 전일 대비 비율
 
@@ -113,7 +112,7 @@ async def upbit_websocket():
                     # 거래 체결 데이터 처리 (거래량 변화)
                     elif data['type'] == 'trade':
                         market = data['code']
-                        korean_name = all_krw_coins.get(market, '알 수 없음')
+                        korean_name = coin_name_dict.get(market, '알 수 없음')
                         trade_price = data['trade_price']
                         trade_volume = data['trade_volume']
                         trade_value = trade_price * trade_volume
@@ -124,7 +123,8 @@ async def upbit_websocket():
                             message = (
                                 f"[업비트] {trade_type} 알림: {market} ({korean_name})\n"
                                 f"체결 가격: {trade_price:,.0f}원\n"
-                                f"체결 금액: {trade_value:,.0f}원"
+                                f"체결 금액: {trade_value:,.0f}원\n"
+                                f"전일 대비: {change_rate:.2f}%"
                             )
 
                             msg_id = hashlib.md5(message.encode()).hexdigest()
@@ -147,7 +147,6 @@ async def upbit_websocket():
 
     logging.error("Max reconnect attempts reached. Stopping websocket.")
 
-### 바이낸스 선물 웹소켓 코드
 async def binance_websocket():
     uri = "wss://fstream.binance.com/ws/!markPrice@arr"
 
