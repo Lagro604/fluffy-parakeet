@@ -6,9 +6,9 @@ import httpx
 import websockets
 import json
 from flask import Flask
-from threading import Thread
 from time import time
 import signal
+from threading import Event
 
 app = Flask(__name__)
 
@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # 종료 플래그
-shutdown_event = asyncio.Event()
+shutdown_event = Event()
 
 async def send_telegram_message(message):
     url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
@@ -67,9 +67,9 @@ async def get_all_krw_coins():
 
 async def upbit_websocket():
     uri = "wss://api.upbit.com/websocket/v1"
-   
+    
     await get_all_krw_coins()
-   
+    
     subscribe_message = [
         {"ticket": "test"},
         {"type": "ticker", "codes": list(coin_name_dict.keys())},
@@ -167,7 +167,7 @@ async def process_binance_data(symbol_data):
 
     if trade_value >= BINANCE_FUTURE_TRADE_THRESHOLD:
         trade_type = "매수" if symbol_data['m'] else "매도"  # 'm'이 true이면 매수, false이면 매도
-       
+        
         message = (
             f"[바이낸스] {trade_type} 알림: {symbol} ({korean_name})\n"
             f"마크 가격: {mark_price:,.0f}원\n"
@@ -193,21 +193,8 @@ async def send_message_if_new(message):
 async def run_websockets():
     await asyncio.gather(upbit_websocket(), binance_websocket())
 
-def run_async_websocket():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(loop, sig)))
-
-    try:
-        loop.run_until_complete(run_websockets())
-    finally:
-        loop.close()
-
-async def shutdown(loop, signal=None):
-    if signal:
-        logger.info(f"Received exit signal {signal.name}...")
+async def shutdown(signal, loop):
+    logger.info(f"Received exit signal {signal.name}...")
     logger.info("Shutting down...")
     shutdown_event.set()
     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
@@ -223,17 +210,19 @@ def index():
 def health():
     return "OK", 200
 
-def start_websocket_thread():
-    thread = Thread(target=run_async_websocket)
-    thread.daemon = True
-    thread.start()
+def run_flask():
+    app.run(host='0.0.0.0', port=PORT)
 
 def create_app():
-    start_websocket_thread()
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(s, loop)))
+    
+    loop.create_task(run_websockets())
     return app
 
 # Gunicorn용 앱 객체
 application = create_app()
 
 if __name__ == '__main__':
-    application.run(host='0.0.0.0', port=PORT)
+    run_flask()
