@@ -5,7 +5,6 @@ import logging
 import httpx
 from flask import Flask, request
 from threading import Thread
-from datetime import datetime
 
 app = Flask(__name__)
 
@@ -16,8 +15,7 @@ TRADE_THRESHOLD = 20000000  # 2천만 원
 EXCLUDED_TRADE_THRESHOLD = 70000000  # 7천만 원
 BITCOIN_ORDERBOOK_THRESHOLD = 3000000000  # 30억 원
 EXCLUDED_COINS = ['KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE', 'KRW-USDT', 'KRW-XRP']
-recent_messages = {}  # 해시 값과 시간을 저장하는 딕셔너리
-TTL = 10800  # 해시 값의 유효 기간을 1시간(3600초)로 설정
+recent_messages = set()  # 최근 메시지 중복 방지
 logging.basicConfig(level=logging.DEBUG)  # 로그 레벨 설정
 
 async def send_telegram_message(message):
@@ -38,7 +36,7 @@ async def get_orderbook(market_id):
         return None
 
 async def get_recent_trades(market_id):
-    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=15'  # 최근 거래 15개 요청
+    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=15'  # 최근 거래 10개 요청
     async with httpx.AsyncClient() as client:
         response = await client.get(url)
         if response.status_code == 200:
@@ -72,13 +70,6 @@ async def monitor_market():
     logging.info("Monitoring market started.")
 
     while True:
-        current_time = datetime.now().timestamp()  # 현재 시간 (초 단위)
-        
-        # 오래된 해시 값 제거 (TTL 기반)
-        expired_msgs = [msg_id for msg_id, added_time in recent_messages.items() if current_time - added_time > TTL]
-        for msg_id in expired_msgs:
-            del recent_messages[msg_id]  # 오래된 해시 값 삭제
-        
         logging.debug("Checking markets...")
         for market_id, coin_name in COIN_NAMES.items():
             if market_id == "KRW-BTC":
@@ -103,7 +94,7 @@ async def monitor_market():
                             msg_id = hashlib.md5(message.encode()).hexdigest()
                             if msg_id not in recent_messages:
                                 await send_telegram_message(message)
-                                recent_messages[msg_id] = current_time  # 현재 시간을 저장
+                                recent_messages.add(msg_id)
 
                 continue
 
@@ -117,17 +108,6 @@ async def monitor_market():
                     total_trade_value += trade_value
                     trade_type = "매수" if trade['ask_bid'] == "BID" else "매도"
 
-                    # trade_timestamp가 있는지 확인하고 없으면 기본값을 사용
-                    trade_timestamp = trade.get('trade_timestamp', None)
-
-                    if trade_timestamp:
-                        trade_time = datetime.fromtimestamp(trade_timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
-                    else:
-                        trade_time = "시간 정보 없음"  # 기본값 설정
-
-                    # 거래 ID 또는 고유 식별자를 사용하여 메시지 중복 방지 강화
-                    trade_id = trade.get('sequential_id', trade_timestamp)
-
                     if trade_value >= TRADE_THRESHOLD and market_id not in EXCLUDED_COINS:
                         ticker_data = await get_ticker(market_id)
                         current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else 0
@@ -136,17 +116,14 @@ async def monitor_market():
 
                         message = (
                             f"{trade_type} 알림: {market_id} ({coin_name})\n"
-                            f"최근 거래: {format_krw(trade_value)} (거래 가격: {format_krw(trade['trade_price'])})\n"
-                     
-                            f"거래 ID: {trade_id}\n"
+                            f"최근 거래: {format_krw(trade_value)}\n"
                             f"총 체결 금액: {format_krw(total_trade_value)}\n"
                             f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
                         )
-
                         msg_id = hashlib.md5(message.encode()).hexdigest()
                         if msg_id not in recent_messages:
                             await send_telegram_message(message)
-                            recent_messages[msg_id] = current_time  # 현재 시간을 저장
+                            recent_messages.add(msg_id)
 
                     elif trade_value >= EXCLUDED_TRADE_THRESHOLD and market_id in EXCLUDED_COINS:
                         ticker_data = await get_ticker(market_id)
@@ -155,18 +132,15 @@ async def monitor_market():
                         change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
 
                         message = (
-                            f"{trade_type} 알림 : {market_id} ({coin_name})\n"
-                            f"최근 거래: {format_krw(trade_value)} (거래 가격: {format_krw(trade['trade_price'])})\n"
-                      
-                            f"거래 ID: {trade_id}\n"
+                            f"{trade_type} 알림 (제외 코인): {market_id} ({coin_name})\n"
+                            f"최근 거래: {format_krw(trade_value)}\n"
                             f"총 체결 금액: {format_krw(total_trade_value)}\n"
                             f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
                         )
-
                         msg_id = hashlib.md5(message.encode()).hexdigest()
                         if msg_id not in recent_messages:
                             await send_telegram_message(message)
-                            recent_messages[msg_id] = current_time  # 현재 시간을 저장
+                            recent_messages.add(msg_id)
 
         await asyncio.sleep(4)  # 10초 대기
 
