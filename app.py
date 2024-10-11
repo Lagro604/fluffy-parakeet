@@ -41,7 +41,7 @@ def delete_old_hashes():
     """오래된 메시지 해시 값 삭제"""
     current_time = time()
     keys_to_delete = [key for key, timestamp in recent_messages.items() if current_time - timestamp > MESSAGE_EXPIRATION_TIME]
-    
+   
     for key in keys_to_delete:
         del recent_messages[key]
     logging.debug(f"Deleted {len(keys_to_delete)} old messages from recent_messages")
@@ -65,7 +65,7 @@ async def upbit_websocket():
 
     # 모든 KRW 마켓 코인 구독
     await get_all_krw_coins()
-    
+   
     # 티커와 체결 정보 구독
     subscribe_message = [
         {"ticket": "test"},
@@ -152,7 +152,7 @@ async def binance_websocket():
 
     async with websockets.connect(uri) as websocket:
         logging.info("Binance WebSocket connected and subscribed to mark prices.")
-        
+       
         while True:
             response = await websocket.recv()
             data = json.loads(response)
@@ -161,7 +161,7 @@ async def binance_websocket():
                 symbol = symbol_data['s']
                 korean_name = coin_name_dict.get(symbol, '알 수 없음')
                 mark_price = float(symbol_data['p'])
-                
+               
                 # 예시로 거래 체결 시 체결 가격을 분석 후 알림 전송 (여기서는 마크 가격으로 간단하게 예시)
                 if mark_price > BINANCE_FUTURE_TRADE_THRESHOLD:  # 설정한 금액 기준
                     message = f"[바이낸스] 선물 알림: {symbol} ({korean_name})\n" \
@@ -173,7 +173,6 @@ async def binance_websocket():
                     delete_old_hashes()  # 오래된 해시값 삭제
 
 def run_async_websocket():
-    # 비동기 웹소켓 함수들을 메인 스레드에서 실행
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(asyncio.gather(upbit_websocket(), binance_websocket()))
@@ -182,8 +181,10 @@ def run_async_websocket():
 def index():
     return "Hello, World!"
 
-# 애플리케이션 시작 시 백그라운드 태스크 시작
-if __name__ == '__main__':
+@app.before_first_request
+def start_background_tasks():
     thread = Thread(target=run_async_websocket)
     thread.start()
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))  # Heroku에서는 환경변수 PORT 사용
+
+if __name__ == '__main__':
+    app.run()
