@@ -8,8 +8,8 @@ import json
 from flask import Flask
 from threading import Thread
 from time import time
-from flask.cli import with_appcontext
 import click
+from flask.cli import with_appcontext
 
 app = Flask(__name__)
 
@@ -20,7 +20,7 @@ UPBIT_TRADE_THRESHOLD = 20000000  # 업비트 기본 2천만 원
 EXCLUDED_TRADE_THRESHOLD = 70000000  # 제외된 코인은 7천만 원
 EXCLUDED_COINS = ['KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE', 'KRW-USDT', 'KRW-XRP']
 recent_messages = {}  # 최근 메시지 중복 방지 (메시지 해시 값과 타임스탬프 저장)
-MESSAGE_EXPIRATION_TIME = 7200  # 1시간 (3600초) 후에 메시지 해시 값 삭제
+MESSAGE_EXPIRATION_TIME = 7200  # 2시간 (7200초) 후에 메시지 해시 값 삭제
 logging.basicConfig(level=logging.INFO)  # 로그 레벨 설정
 
 # 바이낸스 선물 상위 100개 구독용
@@ -43,7 +43,6 @@ def delete_old_hashes():
     """오래된 메시지 해시 값 삭제"""
     current_time = time()
     keys_to_delete = [key for key, timestamp in recent_messages.items() if current_time - timestamp > MESSAGE_EXPIRATION_TIME]
-   
     for key in keys_to_delete:
         del recent_messages[key]
     logging.debug(f"Deleted {len(keys_to_delete)} old messages from recent_messages")
@@ -64,11 +63,7 @@ async def get_all_krw_coins():
 
 async def upbit_websocket():
     uri = "wss://api.upbit.com/websocket/v1"
-
-    # 모든 KRW 마켓 코인 구독
     await get_all_krw_coins()
-   
-    # 티커와 체결 정보 구독
     subscribe_message = [
         {"ticket": "test"},
         {"type": "ticker", "codes": list(coin_name_dict.keys())},  # 모든 KRW 코인에 대해 티커 구독
@@ -82,17 +77,14 @@ async def upbit_websocket():
     while reconnect_attempts < max_reconnect_attempts:
         try:
             async with websockets.connect(uri) as websocket:
-                # 구독 요청
                 await websocket.send(json.dumps(subscribe_message))
                 logging.info("WebSocket connected and subscribed.")
                 reconnect_attempts = 0  # 연결 성공 시 재연결 횟수 초기화
 
                 while True:
-                    # 실시간 데이터 수신
                     response = await websocket.recv()
                     data = json.loads(response)
 
-                    # 티커 데이터 처리 (가격 변화)
                     if data['type'] == 'ticker':
                         market = data['code']
                         korean_name = coin_name_dict.get(market, '알 수 없음')
@@ -111,7 +103,6 @@ async def upbit_websocket():
                             recent_messages[msg_id] = time()  # 메시지 해시와 타임스탬프 저장
                         delete_old_hashes()  # 오래된 해시값 삭제
 
-                    # 거래 체결 데이터 처리 (거래량 변화)
                     elif data['type'] == 'trade':
                         market = data['code']
                         korean_name = coin_name_dict.get(market, '알 수 없음')
@@ -164,7 +155,6 @@ async def binance_websocket():
                 korean_name = coin_name_dict.get(symbol, '알 수 없음')
                 mark_price = float(symbol_data['p'])
                
-                # 예시로 거래 체결 시 체결 가격을 분석 후 알림 전송 (여기서는 마크 가격으로 간단하게 예시)
                 if mark_price > BINANCE_FUTURE_TRADE_THRESHOLD:  # 설정한 금액 기준
                     message = f"[바이낸스] 선물 알림: {symbol} ({korean_name})\n" \
                               f"마크 가격: {mark_price}"
@@ -183,9 +173,7 @@ def init_app():
     # 웹소켓 실행
     loop.create_task(upbit_websocket())
     loop.create_task(binance_websocket())
-    
-    # Flask 앱 실행
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), use_reloader=False)
 
+# main guard
 if __name__ == "__main__":
-    init_app()
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), use_reloader=False)
