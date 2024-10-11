@@ -123,7 +123,7 @@ async def monitor_market():
                         message = (
                             f"{trade_type} 알림: {market_id} ({coin_name})\n"
                             f"최근 거래: {format_krw(trade_value)} ({format_krw(trade['trade_price'])}원)\n"
-                          
+                            f"거래 시각: {trade_time}\n"  # 사람이 읽기 좋은 시간 정보
                             f"거래 ID: {trade_id}\n"  # 고유 거래 ID 추가
                             f"총 체결 금액: {format_krw(total_trade_value)}\n"
                             f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
@@ -143,7 +143,7 @@ async def monitor_market():
                         message = (
                             f"{trade_type} 알림 (제외 코인): {market_id} ({coin_name})\n"
                             f"최근 거래: {format_krw(trade_value)} ({format_krw(trade['trade_price'])}원)\n"
-                         
+                            f"거래 시각: {trade_time}\n"  # 사람이 읽기 좋은 시간 정보
                             f"거래 ID: {trade_id}\n"  # 고유 거래 ID 추가
                             f"총 체결 금액: {format_krw(total_trade_value)}\n"
                             f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
