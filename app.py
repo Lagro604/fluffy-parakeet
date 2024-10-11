@@ -210,6 +210,10 @@ def index():
 def health():
     return "OK", 200
 
+@app.route('/test')
+def test():
+    return "Test route is working!", 200
+
 def run_flask():
     app.run(host='0.0.0.0', port=PORT)
 
