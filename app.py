@@ -3,154 +3,231 @@ import hashlib
 import asyncio
 import logging
 import httpx
-from flask import Flask, request
+import websockets
+import json
+from flask import Flask
 from threading import Thread
+from time import time
+import signal
 
 app = Flask(__name__)
 
-# 환경 변수에서 설정
+# 환경 변수 설정 (토큰과 채팅 ID만)
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
-TRADE_THRESHOLD = 20000000  # 2천만 원
-EXCLUDED_TRADE_THRESHOLD = 70000000  # 7천만 원
-BITCOIN_ORDERBOOK_THRESHOLD = 3000000000  # 30억 원
+
+# 직접 설정하는 값들
+UPBIT_TRADE_THRESHOLD = 20000000
+EXCLUDED_TRADE_THRESHOLD = 70000000
 EXCLUDED_COINS = ['KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE', 'KRW-USDT', 'KRW-XRP']
-recent_messages = set()  # 최근 메시지 중복 방지
-logging.basicConfig(level=logging.DEBUG)  # 로그 레벨 설정
+BINANCE_FUTURE_TRADE_THRESHOLD = 200000000
+PORT = 5000
+
+recent_messages = {}
+MESSAGE_EXPIRATION_TIME = 7200
+coin_name_dict = {}
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# 종료 플래그
+shutdown_event = asyncio.Event()
 
 async def send_telegram_message(message):
     url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
     payload = {'chat_id': CHAT_ID, 'text': message}
     async with httpx.AsyncClient() as client:
-        response = await client.post(url, json=payload)
-        if response.status_code != 200:
-            logging.error(f'Error sending message: {response.text}')
+        try:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            logger.error(f'Error sending message: {e}')
 
-async def get_orderbook(market_id):
-    url = f'https://api.upbit.com/v1/orderbook?markets={market_id}'
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        if response.status_code == 200:
-            return response.json()
-        logging.error(f'Error fetching orderbook for {market_id}: {response.text}')
-        return None
+def delete_old_hashes():
+    current_time = time()
+    keys_to_delete = [key for key, timestamp in recent_messages.items() if current_time - timestamp > MESSAGE_EXPIRATION_TIME]
+    for key in keys_to_delete:
+        del recent_messages[key]
+    logger.debug(f"Deleted {len(keys_to_delete)} old messages from recent_messages")
 
-async def get_recent_trades(market_id):
-    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=15'  # 최근 거래 10개 요청
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        if response.status_code == 200:
-            return response.json()
-        logging.error(f'Error fetching recent trades for {market_id}: {response.text}')
-        return None
-
-async def get_ticker(market_id):
-    url = f'https://api.upbit.com/v1/ticker?markets={market_id}'
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        if response.status_code == 200:
-            return response.json()
-        logging.error(f'Error fetching ticker for {market_id}: {response.text}')
-        return None
-
-async def get_coin_names():
+async def get_all_krw_coins():
     url = 'https://api.upbit.com/v1/market/all'
     async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        if response.status_code == 200:
-            return {coin['market']: coin['korean_name'] for coin in response.json()}
-        logging.error(f'Error fetching coin names: {response.text}')
-        return {}
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            markets = response.json()
+            for market in markets:
+                if market['market'].startswith('KRW-'):
+                    coin_name_dict[market['market']] = market['korean_name']
+            return coin_name_dict
+        except httpx.HTTPError as e:
+            logger.error(f'Error fetching market data: {e}')
+            return {}
 
-def format_krw(value):
-    return f"{value:,.0f}원"
+async def upbit_websocket():
+    uri = "wss://api.upbit.com/websocket/v1"
+    
+    await get_all_krw_coins()
+    
+    subscribe_message = [
+        {"ticket": "test"},
+        {"type": "ticker", "codes": list(coin_name_dict.keys())},
+        {"type": "trade", "codes": list(coin_name_dict.keys())}
+    ]
 
-async def monitor_market():
-    COIN_NAMES = await get_coin_names()
-    logging.info("Monitoring market started.")
+    while not shutdown_event.is_set():
+        try:
+            async with websockets.connect(uri) as websocket:
+                await websocket.send(json.dumps(subscribe_message))
+                logger.info("Upbit WebSocket connected and subscribed.")
 
-    while True:
-        logging.debug("Checking markets...")
-        for market_id, coin_name in COIN_NAMES.items():
-            if market_id == "KRW-BTC":
-                orderbook_data = await get_orderbook(market_id)
-                logging.debug(f"Orderbook data for {market_id}: {orderbook_data}")
-                if orderbook_data and isinstance(orderbook_data, list) and len(orderbook_data) > 0:
-                    ask_units = orderbook_data[0].get('orderbook_units', [])
-                    if ask_units:
-                        ask_size = ask_units[0]['ask_size']
-                        bid_size = ask_units[0]['bid_size']
+                while not shutdown_event.is_set():
+                    try:
+                        response = await asyncio.wait_for(websocket.recv(), timeout=30)
+                        data = json.loads(response)
 
-                        if ask_size >= BITCOIN_ORDERBOOK_THRESHOLD or bid_size >= BITCOIN_ORDERBOOK_THRESHOLD:
-                            ticker_data = await get_ticker(market_id)
-                            current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                            yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                            change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
+                        if data['type'] == 'ticker':
+                            await process_upbit_ticker(data)
+                        elif data['type'] == 'trade':
+                            await process_upbit_trade(data)
+                    except asyncio.TimeoutError:
+                        continue
 
-                            message = (
-                                f"비트코인 알림: {market_id} ({coin_name})\n"
-                                f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
-                            )
-                            msg_id = hashlib.md5(message.encode()).hexdigest()
-                            if msg_id not in recent_messages:
-                                await send_telegram_message(message)
-                                recent_messages.add(msg_id)
+        except websockets.exceptions.ConnectionClosed:
+            logger.warning("Upbit WebSocket connection closed. Reconnecting...")
+            await asyncio.sleep(5)
+        except Exception as e:
+            logger.error(f"Unexpected error in Upbit WebSocket: {e}")
+            await asyncio.sleep(5)
 
-                continue
+async def process_upbit_ticker(data):
+    market = data['code']
+    korean_name = coin_name_dict.get(market, '알 수 없음')
+    current_price = data['trade_price']
+    change_rate = data['signed_change_rate'] * 100
 
-            recent_trades = await get_recent_trades(market_id)
-            logging.debug(f"Recent trades for {market_id}: {recent_trades}")
-            if isinstance(recent_trades, list) and recent_trades:
-                total_trade_value = 0
+    message = (
+        f"[업비트] 티커 알림: {market} ({korean_name})\n"
+        f"현재 가격: {current_price:,.0f}원\n"
+        f"전일 대비: {change_rate:.2f}%"
+    )
 
-                for trade in recent_trades:
-                    trade_value = trade['trade_price'] * trade['trade_volume']
-                    total_trade_value += trade_value
-                    trade_type = "매수" if trade['ask_bid'] == "BID" else "매도"
+    await send_message_if_new(message)
 
-                    if trade_value >= TRADE_THRESHOLD and market_id not in EXCLUDED_COINS:
-                        ticker_data = await get_ticker(market_id)
-                        current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                        yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                        change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
+async def process_upbit_trade(data):
+    market = data['code']
+    korean_name = coin_name_dict.get(market, '알 수 없음')
+    trade_price = data['trade_price']
+    trade_volume = data['trade_volume']
+    trade_value = trade_price * trade_volume
+    trade_type = "매수" if data['ask_bid'] == "BID" else "매도"
 
-                        message = (
-                            f"{trade_type} 알림: {market_id} ({coin_name})\n"
-                            f"최근 거래: {format_krw(trade_value)}\n"
-                            f"총 체결 금액: {format_krw(total_trade_value)}\n"
-                            f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
-                        )
-                        msg_id = hashlib.md5(message.encode()).hexdigest()
-                        if msg_id not in recent_messages:
-                            await send_telegram_message(message)
-                            recent_messages.add(msg_id)
+    if (market in EXCLUDED_COINS and trade_value >= EXCLUDED_TRADE_THRESHOLD) or \
+       (market not in EXCLUDED_COINS and trade_value >= UPBIT_TRADE_THRESHOLD):
+        message = (
+            f"[업비트] {trade_type} 알림: {market} ({korean_name})\n"
+            f"체결 가격: {trade_price:,.0f}원\n"
+            f"체결 금액: {trade_value:,.0f}원"
+        )
 
-                    elif trade_value >= EXCLUDED_TRADE_THRESHOLD and market_id in EXCLUDED_COINS:
-                        ticker_data = await get_ticker(market_id)
-                        current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                        yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                        change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
+        await send_message_if_new(message)
 
-                        message = (
-                            f"{trade_type} 알림 (제외 코인): {market_id} ({coin_name})\n"
-                            f"최근 거래: {format_krw(trade_value)}\n"
-                            f"총 체결 금액: {format_krw(total_trade_value)}\n"
-                            f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
-                        )
-                        msg_id = hashlib.md5(message.encode()).hexdigest()
-                        if msg_id not in recent_messages:
-                            await send_telegram_message(message)
-                            recent_messages.add(msg_id)
+async def binance_websocket():
+    uri = "wss://fstream.binance.com/ws/!markPrice@arr"
 
-        await asyncio.sleep(4)  # 10초 대기
+    while not shutdown_event.is_set():
+        try:
+            async with websockets.connect(uri) as websocket:
+                logger.info("Binance WebSocket connected and subscribed to mark prices.")
 
-def run_async_monitor():
-    asyncio.run(monitor_market())
+                while not shutdown_event.is_set():
+                    try:
+                        response = await asyncio.wait_for(websocket.recv(), timeout=30)
+                        data = json.loads(response)
+
+                        for symbol_data in data:
+                            await process_binance_data(symbol_data)
+                    except asyncio.TimeoutError:
+                        continue
+
+        except websockets.exceptions.ConnectionClosed:
+            logger.warning("Binance WebSocket connection closed. Reconnecting...")
+            await asyncio.sleep(5)
+        except Exception as e:
+            logger.error(f"Unexpected error in Binance WebSocket: {e}")
+            await asyncio.sleep(5)
+
+async def process_binance_data(symbol_data):
+    symbol = symbol_data['s']
+    korean_name = coin_name_dict.get(symbol, '알 수 없음')
+    mark_price = float(symbol_data['p'])
+    trade_volume = float(symbol_data['q'])  # 거래량
+    trade_value = trade_volume * mark_price  # 거래 금액 계산
+
+    if trade_value >= BINANCE_FUTURE_TRADE_THRESHOLD:
+        trade_type = "매수" if symbol_data['m'] else "매도"  # 'm'이 true이면 매수, false이면 매도
+        
+        message = (
+            f"[바이낸스] {trade_type} 알림: {symbol} ({korean_name})\n"
+            f"마크 가격: {mark_price:,.0f}원\n"
+            f"체결 금액: {trade_value:,.0f}원"
+        )
+        await send_message_if_new(message)
+
+    if trade_value >= 500000000:  # 5억 이상 체결 시 추가 메시지
+        high_value_message = (
+            f"[바이낸스] 높은 거래 체결 알림: {symbol} ({korean_name})\n"
+            f"마크 가격: {mark_price:,.0f}원\n"
+            f"체결 금액: {trade_value:,.0f}원"
+        )
+        await send_message_if_new(high_value_message)
+
+async def send_message_if_new(message):
+    msg_id = hashlib.md5(message.encode()).hexdigest()
+    if msg_id not in recent_messages:
+        await send_telegram_message(message)
+        recent_messages[msg_id] = time()
+    delete_old_hashes()
+
+async def run_websockets():
+    await asyncio.gather(upbit_websocket(), binance_websocket())
+
+def run_async_websocket():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(loop, sig)))
+
+    try:
+        loop.run_until_complete(run_websockets())
+    finally:
+        loop.close()
+
+async def shutdown(loop, signal=None):
+    if signal:
+        logger.info(f"Received exit signal {signal.name}...")
+    logger.info("Shutting down...")
+    shutdown_event.set()
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    [task.cancel() for task in tasks]
+    await asyncio.gather(*tasks, return_exceptions=True)
+    loop.stop()
 
 @app.route('/')
 def index():
-    return "Hello, World!"
+    return "Crypto Price Alert Service is running!"
 
-# 애플리케이션 시작 시 백그라운드 태스크 실행
-background_thread = Thread(target=run_async_monitor)
-background_thread.start()
+@app.route('/health')
+def health():
+    return "OK", 200
+
+def start_websocket_thread():
+    thread = Thread(target=run_async_websocket)
+    thread.daemon = True
+    thread.start()
+
+if __name__ == '__main__':
+    start_websocket_thread()
+    app.run(host='0.0.0.0', port=PORT)
