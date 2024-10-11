@@ -136,8 +136,8 @@ async def monitor_market():
 
                         message = (
                             f"{trade_type} 알림: {market_id} ({coin_name})\n"
-                            f"최근 거래: {format_krw(trade_value)} (거래 가격: {format_krw(trade['trade_price'])}원)\n"
-                            f"거래 시각: {trade_time}\n"
+                            f"최근 거래: {format_krw(trade_value)} (거래 가격: {format_krw(trade['trade_price'])})\n"
+                     
                             f"거래 ID: {trade_id}\n"
                             f"총 체결 금액: {format_krw(total_trade_value)}\n"
                             f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
@@ -155,9 +155,9 @@ async def monitor_market():
                         change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
 
                         message = (
-                            f"{trade_type} 알림 (제외 코인): {market_id} ({coin_name})\n"
-                            f"최근 거래: {format_krw(trade_value)} (거래 가격: {format_krw(trade['trade_price'])}원)\n"
-                            f"거래 시각: {trade_time}\n"
+                            f"{trade_type} 알림 : {market_id} ({coin_name})\n"
+                            f"최근 거래: {format_krw(trade_value)} (거래 가격: {format_krw(trade['trade_price'])})\n"
+                      
                             f"거래 ID: {trade_id}\n"
                             f"총 체결 금액: {format_krw(total_trade_value)}\n"
                             f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
@@ -168,7 +168,7 @@ async def monitor_market():
                             await send_telegram_message(message)
                             recent_messages[msg_id] = current_time  # 현재 시간을 저장
 
-        await asyncio.sleep(5)  # 10초 대기
+        await asyncio.sleep(4)  # 10초 대기
 
 def run_async_monitor():
     asyncio.run(monitor_market())
