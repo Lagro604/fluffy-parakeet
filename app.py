@@ -5,9 +5,11 @@ import logging
 import httpx
 import websockets
 import json
-from flask import Flask, request
+from flask import Flask
 from threading import Thread
 from time import time
+from flask.cli import with_appcontext
+import click
 
 app = Flask(__name__)
 
@@ -181,10 +183,13 @@ def run_async_websocket():
 def index():
     return "Hello, World!"
 
-@app.before_first_request
-def start_background_tasks():
+@click.command(name='init_app')
+@with_appcontext
+def init_app():
     thread = Thread(target=run_async_websocket)
     thread.start()
+
+app.cli.add_command(init_app)
 
 if __name__ == '__main__':
     app.run()
