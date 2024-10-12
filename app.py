@@ -5,7 +5,7 @@ import logging
 import httpx
 import websockets
 import json
-from flask import Flask
+from flask import Flask, request
 from time import time
 import signal
 from threading import Event
@@ -27,7 +27,7 @@ recent_messages = {}
 MESSAGE_EXPIRATION_TIME = 10800
 coin_name_dict = {}
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # 종료 플래그
@@ -213,6 +213,12 @@ def health():
 @app.route('/test')
 def test():
     return "Test route is working!", 200
+
+@app.route('/your_webhook_endpoint', methods=['POST'])
+def webhook():
+    update = request.get_json()
+    logger.info(f"Received update: {update}")  # 수신된 업데이트 로그 출력
+    return 'OK', 200
 
 def run_flask():
     app.run(host='0.0.0.0', port=PORT)
