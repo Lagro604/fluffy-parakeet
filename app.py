@@ -140,15 +140,15 @@ async def monitor_market():
                             if market_id in EXCLUDED_COINS:
                                 message = (
                                     f"제외 코인 알림: {market_id} ({coin_name})\n"
-                                    f"최근 거래: {format_krw(trade_value)}\n"
-                                    f"현재 가격: {format_krw(current_price) if current_price else 'N/A'}\n"
+                                    f"거래금액: {format_krw(trade_value)}\n"
+                                    f"거래가격: {format_krw(trade['trade_price'])}\n"  # 현재 가격을 체결된 가격으로 변경
                                     f"전일 대비: {change_percentage:.2f}%" if change_percentage is not None else "전일 대비: N/A"
                                 )
                             else:
                                 message = (
                                     f"{trade_type} 알림: {market_id} ({coin_name})\n"
-                                    f"최근 거래: {format_krw(trade_value)}\n"
-                                    f"현재 가격: {format_krw(current_price) if current_price else 'N/A'}\n"
+                                    f"거래금액: {format_krw(trade_value)}\n"
+                                    f"거래가격: {format_krw(trade['trade_price'])}\n"  # 현재 가격을 체결된 가격으로 변경
                                     f"전일 대비: {change_percentage:.2f}%" if change_percentage is not None else "전일 대비: N/A"
                                 )
 
