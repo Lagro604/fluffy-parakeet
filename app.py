@@ -89,11 +89,15 @@ async def upbit_websocket():
                         response = await asyncio.wait_for(websocket.recv(), timeout=30)
                         data = json.loads(response)
 
+                        # 웹소켓에서 수신한 데이터를 확인하기 위한 로그
                         logger.debug(f"Data received from Upbit WebSocket: {data}")
 
+                        # 수신된 데이터의 타입에 따른 처리
                         if data['type'] == 'ticker':
+                            logger.info("Processing ticker data...")
                             await process_upbit_ticker(data)
                         elif data['type'] == 'trade':
+                            logger.info("Processing trade data...")
                             await process_upbit_trade(data)
                     except asyncio.TimeoutError:
                         continue
@@ -232,11 +236,9 @@ def create_app():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(s, loop)))
     
+    loop.create_task(run_flask())
     loop.create_task(run_websockets())
-    return app
-
-# Gunicorn용 앱 객체
-application = create_app()
+    loop.run_forever()
 
 if __name__ == '__main__':
-    run_flask()
+    create_app()
