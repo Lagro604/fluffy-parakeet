@@ -86,6 +86,15 @@ def webhook():
     # 웹훅으로 수신한 요청 처리
     payload = request.json
     logger.info(f"웹훅 요청 수신: {json.dumps(payload, indent=2)}")
+
+    # 특정 필드에 대한 처리 예시
+    if 'event_type' in payload and payload['event_type'] == 'trade':
+        # 거래 관련 데이터 처리
+        trade_data = payload.get('data')
+        if trade_data:
+            # 예: 거래 알림 전송
+            send_telegram_message(f"새 거래 발생: {trade_data}")
+
     return 'Webhook received!', 200
 
 if __name__ == '__main__':
