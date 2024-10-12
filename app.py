@@ -76,6 +76,7 @@ async def monitor_market():
         logging.debug("Checking markets...")
         current_time = time.time()  # 현재 시간 저장
         for market_id, coin_name in COIN_NAMES.items():
+            current_price = None  # 변수 초기화
             if market_id == "KRW-BTC":
                 orderbook_data = await get_orderbook(market_id)
                 logging.debug(f"Orderbook data for {market_id}: {orderbook_data}")
@@ -87,7 +88,7 @@ async def monitor_market():
 
                         if ask_size >= BITCOIN_ORDERBOOK_THRESHOLD or bid_size >= BITCOIN_ORDERBOOK_THRESHOLD:
                             ticker_data = await get_ticker(market_id)
-                            current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else 0
+                            current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else None
                             yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
                             change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
 
@@ -122,15 +123,15 @@ async def monitor_market():
                                 message = (
                                     f"제외 코인 알림: {market_id} ({coin_name})\n"
                                     f"최근 거래: {format_krw(trade_value)}\n"
-                                    f"현재 가격: {format_krw(current_price)}\n"
-                                    f"전일 대비: {change_percentage:.2f}%"
+                                    f"현재 가격: {format_krw(current_price) if current_price else 'N/A'}\n"  # None 체크 추가
+                                    f"전일 대비: {change_percentage:.2f}%"  # 전일 대비 계산
                                 )
                             else:
                                 message = (
                                     f"{trade_type} 알림: {market_id} ({coin_name})\n"
                                     f"최근 거래: {format_krw(trade_value)}\n"
-                                    f"현재 가격: {format_krw(current_price)}\n"
-                                    f"전일 대비: {change_percentage:.2f}%"
+                                    f"현재 가격: {format_krw(current_price) if current_price else 'N/A'}\n"  # None 체크 추가
+                                    f"전일 대비: {change_percentage:.2f}%"  # 전일 대비 계산
                                 )
                            
                             await send_telegram_message(message)
@@ -141,7 +142,7 @@ async def monitor_market():
         current_time = time.time()  # 현재 시간 재설정
         recent_trade_hashes = deque((h, t) for h, t in recent_trade_hashes if current_time - t < 900)  # 900초(15분) 이상된 해시값 제거
 
-        
+        await asyncio.sleep(9)  # 10초 대기
 
 def run_async_monitor():
     asyncio.run(monitor_market())
