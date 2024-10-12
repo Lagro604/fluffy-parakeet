@@ -1,182 +1,95 @@
 import os
-import hashlib
-import asyncio
+import json
+import requests
+import threading
 import logging
-import httpx
+import time
 from flask import Flask, request
-from threading import Thread
-from datetime import datetime
+from collections import defaultdict
 
 app = Flask(__name__)
 
-# 환경 변수에서 설정
+# 로깅 설정
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# 환경변수에서 텔레그램 토큰 및 채팅 ID 가져오기
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
-TRADE_THRESHOLD = 20000000  # 2천만 원
-EXCLUDED_TRADE_THRESHOLD = 70000000  # 7천만 원
-BITCOIN_ORDERBOOK_THRESHOLD = 3000000000  # 30억 원
-EXCLUDED_COINS = ['KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE', 'KRW-USDT', 'KRW-XRP']
-recent_messages = {}  # 해시 값과 시간을 저장하는 딕셔너리
-TTL = 10800  # 해시 값의 유효 기간을 1시간(3600초)로 설정
-logging.basicConfig(level=logging.DEBUG)  # 로그 레벨 설정
 
-async def send_telegram_message(message):
-    url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
-    payload = {'chat_id': CHAT_ID, 'text': message}
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, json=payload)
-        if response.status_code != 200:
-            logging.error(f'Error sending message: {response.text}')
+# 중복 메시지를 방지하기 위한 딕셔너리
+last_messages = defaultdict(str)
 
-async def get_orderbook(market_id):
-    url = f'https://api.upbit.com/v1/orderbook?markets={market_id}'
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
+# 거래 조건 정의
+UPBIT_CONDITIONS = {
+    'default': 20000000,  # 기본 체결 금액 (2000만원)
+    'high_value': 70000000,  # BTC, SOL, ETH, SHIB, DOGE에 대한 체결 금액 (7000만원)
+}
+BINANCE_CONDITION = 200000000  # 바이낸스 체결 금액 (2억원)
+
+# 업비트 데이터 요청 함수
+def fetch_upbit_data():
+    url = "https://api.upbit.com/v1/trades/ticks?market=KRW-BTC&count=10"  # 예시로 비트코인 데이터를 가져옴
+    response = requests.get(url)
+    if response.status_code == 200:
+        return response.json()
+    return []
+
+# 바이낸스 데이터 요청 함수
+def fetch_binance_data():
+    url = "https://api.binance.com/api/v3/aggTrades?symbol=BTCUSDT&limit=10"  # 예시로 비트코인 데이터를 가져옴
+    response = requests.get(url)
+    if response.status_code == 200:
+        return response.json()
+    return []
+
+# 메시지 전송 함수
+def send_telegram_message(message):
+    if message not in last_messages.values():
+        last_messages[message] = message
+        response = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", data={
+            'chat_id': CHAT_ID,
+            'text': message
+        })
         if response.status_code == 200:
-            return response.json()
-        logging.error(f'Error fetching orderbook for {market_id}: {response.text}')
-        return None
+            logger.info(f"메시지 전송 성공: {message}")
+        else:
+            logger.error(f"메시지 전송 실패: {response.status_code}, {response.text}")
 
-async def get_recent_trades(market_id):
-    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=15'  # 최근 거래 15개 요청
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        if response.status_code == 200:
-            return response.json()
-        logging.error(f'Error fetching recent trades for {market_id}: {response.text}')
-        return None
-
-async def get_ticker(market_id):
-    url = f'https://api.upbit.com/v1/ticker?markets={market_id}'
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        if response.status_code == 200:
-            return response.json()
-        logging.error(f'Error fetching ticker for {market_id}: {response.text}')
-        return None
-
-async def get_coin_names():
-    url = 'https://api.upbit.com/v1/market/all'
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        if response.status_code == 200:
-            return {coin['market']: coin['korean_name'] for coin in response.json()}
-        logging.error(f'Error fetching coin names: {response.text}')
-        return {}
-
-def format_krw(value):
-    return f"{value:,.0f}원"
-
-async def monitor_market():
-    COIN_NAMES = await get_coin_names()
-    logging.info("Monitoring market started.")
-
+# 거래 데이터 확인 및 알림 함수
+def check_trades():
     while True:
-        current_time = datetime.now().timestamp()  # 현재 시간 (초 단위)
-        
-        # 오래된 해시 값 제거 (TTL 기반)
-        expired_msgs = [msg_id for msg_id, added_time in recent_messages.items() if current_time - added_time > TTL]
-        for msg_id in expired_msgs:
-            del recent_messages[msg_id]  # 오래된 해시 값 삭제
-        
-        logging.debug("Checking markets...")
-        for market_id, coin_name in COIN_NAMES.items():
-            if market_id == "KRW-BTC":
-                orderbook_data = await get_orderbook(market_id)
-                logging.debug(f"Orderbook data for {market_id}: {orderbook_data}")
-                if orderbook_data and isinstance(orderbook_data, list) and len(orderbook_data) > 0:
-                    ask_units = orderbook_data[0].get('orderbook_units', [])
-                    if ask_units:
-                        ask_size = ask_units[0]['ask_size']
-                        bid_size = ask_units[0]['bid_size']
+        # 업비트 거래 확인
+        upbit_data = fetch_upbit_data()
+        for trade in upbit_data:
+            price = trade['trade_price']
+            volume = trade['trade_volume']
+            trade_value = price * volume
+            if trade_value >= UPBIT_CONDITIONS['high_value']:  # 조건 확인
+                message = f"업비트 알림: BTC - 체결 금액: {trade_value} 원"
+                send_telegram_message(message)
 
-                        if ask_size >= BITCOIN_ORDERBOOK_THRESHOLD or bid_size >= BITCOIN_ORDERBOOK_THRESHOLD:
-                            ticker_data = await get_ticker(market_id)
-                            current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                            yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                            change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
+        # 바이낸스 거래 확인
+        binance_data = fetch_binance_data()
+        for trade in binance_data:
+            price = float(trade['p'])
+            quantity = float(trade['q'])
+            trade_value = price * quantity
+            if trade_value >= BINANCE_CONDITION:  # 조건 확인
+                message = f"바이낸스 알림: BTC - 체결 금액: {trade_value} 원"
+                send_telegram_message(message)
 
-                            message = (
-                                f"비트코인 알림: {market_id} ({coin_name})\n"
-                                f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
-                            )
-                            msg_id = hashlib.md5(message.encode()).hexdigest()
-                            if msg_id not in recent_messages:
-                                await send_telegram_message(message)
-                                recent_messages[msg_id] = current_time  # 현재 시간을 저장
+        time.sleep(10)  # 10초 간격으로 반복
 
-                continue
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    # 웹훅으로 수신한 요청 처리
+    payload = request.json
+    logger.info(f"웹훅 요청 수신: {json.dumps(payload, indent=2)}")
+    return 'Webhook received!', 200
 
-            recent_trades = await get_recent_trades(market_id)
-            logging.debug(f"Recent trades for {market_id}: {recent_trades}")
-            if isinstance(recent_trades, list) and recent_trades:
-                total_trade_value = 0
-
-                for trade in recent_trades:
-                    trade_value = trade['trade_price'] * trade['trade_volume']
-                    total_trade_value += trade_value
-                    trade_type = "매수" if trade['ask_bid'] == "BID" else "매도"
-
-                    # trade_timestamp가 있는지 확인하고 없으면 기본값을 사용
-                    trade_timestamp = trade.get('trade_timestamp', None)
-
-                    if trade_timestamp:
-                        trade_time = datetime.fromtimestamp(trade_timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
-                    else:
-                        trade_time = "시간 정보 없음"  # 기본값 설정
-
-                    # 거래 ID 또는 고유 식별자를 사용하여 메시지 중복 방지 강화
-                    trade_id = trade.get('sequential_id', trade_timestamp)
-
-                    if trade_value >= TRADE_THRESHOLD and market_id not in EXCLUDED_COINS:
-                        ticker_data = await get_ticker(market_id)
-                        current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                        yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                        change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
-
-                        message = (
-                            f"{trade_type} 알림: {market_id} ({coin_name})\n"
-                            f"최근 거래: {format_krw(trade_value)} (거래 가격: {format_krw(trade['trade_price'])})\n"
-                     
-                            f"거래 ID: {trade_id}\n"
-                            f"총 체결 금액: {format_krw(total_trade_value)}\n"
-                            f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
-                        )
-
-                        msg_id = hashlib.md5(message.encode()).hexdigest()
-                        if msg_id not in recent_messages:
-                            await send_telegram_message(message)
-                            recent_messages[msg_id] = current_time  # 현재 시간을 저장
-
-                    elif trade_value >= EXCLUDED_TRADE_THRESHOLD and market_id in EXCLUDED_COINS:
-                        ticker_data = await get_ticker(market_id)
-                        current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                        yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                        change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
-
-                        message = (
-                            f"{trade_type} 알림 : {market_id} ({coin_name})\n"
-                            f"최근 거래: {format_krw(trade_value)} (거래 가격: {format_krw(trade['trade_price'])})\n"
-                      
-                            f"거래 ID: {trade_id}\n"
-                            f"총 체결 금액: {format_krw(total_trade_value)}\n"
-                            f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
-                        )
-
-                        msg_id = hashlib.md5(message.encode()).hexdigest()
-                        if msg_id not in recent_messages:
-                            await send_telegram_message(message)
-                            recent_messages[msg_id] = current_time  # 현재 시간을 저장
-
-        await asyncio.sleep(4)  # 10초 대기
-
-def run_async_monitor():
-    asyncio.run(monitor_market())
-
-@app.route('/')
-def index():
-    return "Hello, World!"
-
-# 애플리케이션 시작 시 백그라운드 태스크 실행
-background_thread = Thread(target=run_async_monitor)
-background_thread.start()
+if __name__ == '__main__':
+    # 알림 체크 스레드 시작
+    threading.Thread(target=check_trades, daemon=True).start()
+    # Flask 앱 실행
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
