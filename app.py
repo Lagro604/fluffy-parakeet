@@ -133,7 +133,7 @@ async def monitor_market():
                             recent_messages.add(trade_hash)  # 최근 처리한 거래 해시값 추가
                             recent_trade_hashes.append(trade_hash)  # 해시값 저장
 
-  
+    await asyncio.sleep(10)
 
 def run_async_monitor():
     asyncio.run(monitor_market())
