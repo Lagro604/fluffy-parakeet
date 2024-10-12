@@ -1,3 +1,4 @@
+import os  # 이 줄을 추가하세요
 import json
 import requests
 import websocket
