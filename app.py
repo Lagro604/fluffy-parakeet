@@ -69,7 +69,6 @@ def format_krw(value):
     return f"{value:,.0f}원"
 
 async def monitor_market():
-    global recent_trade_hashes  # 전역 변수 사용 선언
     COIN_NAMES = await get_coin_names()
     logging.info("Monitoring market started.")
 
@@ -150,7 +149,7 @@ async def monitor_market():
         current_time = time.time()  # 현재 시간 재설정
         recent_trade_hashes = deque((h, t) for h, t in recent_trade_hashes if current_time - t < 900)  # 900초(15분) 이상된 해시값 제거
 
-        await asyncio.sleep(9)  # 10초 대기
+
 
 def run_async_monitor():
     asyncio.run(monitor_market())
