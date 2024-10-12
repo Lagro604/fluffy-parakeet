@@ -17,7 +17,7 @@ EXCLUDED_TRADE_THRESHOLD = 70000000  # 7천만 원
 BITCOIN_ORDERBOOK_THRESHOLD = 3000000000  # 30억 원
 EXCLUDED_COINS = ['KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE', 'KRW-USDT', 'KRW-XRP']
 recent_messages = set()  # 최근 메시지 중복 방지
-recent_trade_hashes = deque(maxlen=5000)  # 최근 처리한 거래 해시값을 저장 (최대 5,000개)
+recent_trade_hashes = deque(maxlen=40000)  # 최근 처리한 거래 해시값을 저장 (최대 5,000개)
 logging.basicConfig(level=logging.DEBUG)  # 로그 레벨 설정
 
 async def send_telegram_message(message):
