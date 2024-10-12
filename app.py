@@ -6,7 +6,6 @@ import httpx
 from flask import Flask
 from threading import Thread
 from collections import deque
-import time
 
 app = Flask(__name__)
 
@@ -39,7 +38,7 @@ async def get_orderbook(market_id):
         return None
 
 async def get_recent_trades(market_id):
-    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=50'  
+    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=50'
     async with httpx.AsyncClient() as client:
         response = await client.get(url)
         if response.status_code == 200:
@@ -69,23 +68,17 @@ def format_krw(value):
     return f"{value:,.0f}원"
 
 async def monitor_market():
-    global recent_trade_hashes  # 전역 변수로 선언
     COIN_NAMES = await get_coin_names()
     logging.info("Monitoring market started.")
 
     while True:
         logging.debug("Checking markets...")
-        current_time = time.time()  # 현재 시간 저장
-
         for market_id, coin_name in COIN_NAMES.items():
-            current_price = None  # 변수 초기화
-            change_percentage = None  # 변수 초기화
-           
-            # 비트코인 처리
+            current_price = None  # 현재 가격 초기화
+            change_percentage = None  # 전일 대비 초기화
+
             if market_id == "KRW-BTC":
                 orderbook_data = await get_orderbook(market_id)
-                logging.debug(f"Orderbook data for {market_id}: {orderbook_data}")
-
                 if orderbook_data and isinstance(orderbook_data, list) and len(orderbook_data) > 0:
                     ask_units = orderbook_data[0].get('orderbook_units', [])
                     if ask_units:
@@ -110,22 +103,16 @@ async def monitor_market():
 
                 continue  # 비트코인 처리가 끝났으므로 다음 코인으로 이동
 
-            # 일반 코인 처리
             recent_trades = await get_recent_trades(market_id)
-            logging.debug(f"Recent trades for {market_id}: {recent_trades}")
-
             if isinstance(recent_trades, list) and recent_trades:
                 for trade in recent_trades:
                     trade_value = trade['trade_price'] * trade['trade_volume']
                     trade_type = "매수" if trade['ask_bid'] == "BID" else "매도"
 
-                    # 거래 조건 확인
                     if (trade_value >= TRADE_THRESHOLD and market_id not in EXCLUDED_COINS) or \
                        (market_id in EXCLUDED_COINS and trade_value >= EXCLUDED_TRADE_THRESHOLD):
-                        # 해시값 생성
                         trade_hash = hashlib.md5(f"{market_id}-{trade['timestamp']}-{trade_value}".encode()).hexdigest()
 
-                        # 중복 메시지 방지
                         if trade_hash not in recent_messages:
                             if market_id in EXCLUDED_COINS:
                                 message = (
@@ -141,16 +128,12 @@ async def monitor_market():
                                     f"현재 가격: {format_krw(current_price) if current_price else 'N/A'}\n"  # None 체크 추가
                                     f"전일 대비: {change_percentage:.2f}%" if change_percentage is not None else "전일 대비: N/A"
                                 )
-                           
+
                             await send_telegram_message(message)
                             recent_messages.add(trade_hash)  # 최근 처리한 거래 해시값 추가
                             recent_trade_hashes.append(trade_hash)  # 해시값 저장
 
-        # 15분마다 오래된 거래 해시값 제거
-        current_time = time.time()  # 현재 시간 재설정
-        recent_trade_hashes = deque((h, t) for h, t in recent_trade_hashes if current_time - t < 900)  # 900초(15분) 이상된 해시값 제거
-
-
+  
 
 def run_async_monitor():
     asyncio.run(monitor_market())
