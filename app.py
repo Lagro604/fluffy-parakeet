@@ -10,7 +10,7 @@ from collections import defaultdict
 app = Flask(__name__)
 
 # 로깅 설정
-logging.basicConfig(level=logging.DEBUG)  # DEBUG 레벨로 설정하여 모든 로그 출력
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # 환경변수에서 텔레그램 토큰 및 채팅 ID 가져오기
@@ -34,56 +34,51 @@ BINANCE_CONDITION = 200000000  # 바이낸스 체결 금액 (2억원)
 
 # 업비트 웹소켓 처리 함수
 def on_upbit_message(ws, message):
-    try:
-        data = json.loads(message)
-        if 'trade_price' in data:
-            price = data['trade_price']
-            volume = data['trade_volume']
-            symbol = data['market']
-            
-            # 매수/매도 판단 (체결금액 계산)
-            trade_value = price * volume
-            if symbol in ['KRW-BTC', 'KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE']:
-                condition = UPBIT_CONDITIONS['high_value']
-            else:
-                condition = UPBIT_CONDITIONS['default']
+    data = json.loads(message)
+    if 'trade_price' in data:
+        price = data['trade_price']
+        volume = data['trade_volume']
+        symbol = data['market']
+        
+        # 매수/매도 판단 (체결금액 계산)
+        trade_value = price * volume
+        if symbol in ['KRW-BTC', 'KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE']:
+            condition = UPBIT_CONDITIONS['high_value']
+        else:
+            condition = UPBIT_CONDITIONS['default']
 
-            # 체결 금액이 조건을 초과할 때만 메시지 전송
-            if trade_value >= condition:
-                message = f"업비트 알림: {symbol} - 체결 금액: {trade_value} 원, 전일대비: {data.get('signed_change_price', 0)}"
-                send_telegram_message(message)
-    except Exception as e:
-        logger.error(f"업비트 메시지 처리 중 오류 발생: {str(e)}")
+        # 체결 금액이 조건을 초과할 때만 메시지 전송
+        if trade_value >= condition:
+            message = f"업비트 알림: {symbol} - 체결 금액: {trade_value} 원, 전일대비: {data.get('signed_change_price', 0)}"
+            send_telegram_message(message)
 
 # 바이낸스 웹소켓 처리 함수
 def on_binance_message(ws, message):
-    try:
-        data = json.loads(message)
-        if 'e' in data and data['e'] == 'aggTrade':
-            price = float(data['p'])
-            quantity = float(data['q'])
-            symbol = data['s']
+    data = json.loads(message)
+    if 'e' in data and data['e'] == 'aggTrade':
+        price = float(data['p'])
+        quantity = float(data['q'])
+        symbol = data['s']
 
-            # 체결 금액 계산
-            trade_value = price * quantity
-            if trade_value >= BINANCE_CONDITION:
-                message = f"바이낸스 알림: {symbol} - 체결 금액: {trade_value} 원"
-                send_telegram_message(message)
-    except Exception as e:
-        logger.error(f"바이낸스 메시지 처리 중 오류 발생: {str(e)}")
+        # 체결 금액 계산
+        trade_value = price * quantity
+        if trade_value >= BINANCE_CONDITION:
+            message = f"바이낸스 알림: {symbol} - 체결 금액: {trade_value} 원"
+            send_telegram_message(message)
 
 # 텔레그램 메시지 전송 함수
 def send_telegram_message(message):
     if message not in last_messages.values():
         last_messages[message] = message
-        try:
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", data={
-                'chat_id': CHAT_ID,
-                'text': message
-            })
-            logger.info(f"텔레그램 메시지 전송: {message}")
-        except Exception as e:
-            logger.error(f"텔레그램 메시지 전송 중 오류 발생: {str(e)}")
+        response = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", data={
+            'chat_id': CHAT_ID,
+            'text': message
+        })
+        # 메시지 전송 여부 로깅
+        if response.status_code == 200:
+            logger.info(f"메시지 전송 성공: {message}")
+        else:
+            logger.error(f"메시지 전송 실패: {response.status_code}, {response.text}")
 
 # 업비트 및 바이낸스 웹소켓 연결
 def start_upbit_ws():
@@ -98,14 +93,16 @@ def start_binance_ws():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    try:
-        # 웹훅으로 수신한 요청 처리
-        payload = request.json
-        logger.info(f"웹훅 요청 수신: {payload}")
-        return 'Webhook received!', 200
-    except Exception as e:
-        logger.error(f"웹훅 처리 중 오류 발생: {str(e)}")
-        return 'Error', 500
+    # 웹훅으로 수신한 요청 처리
+    payload = request.json
+    logger.info(f"웹훅 요청 수신: {json.dumps(payload, indent=2)}")
+    
+    # 배포 상태 확인
+    status = payload.get('status')
+    if status:
+        logger.info(f"서비스 상태: {status}")
+    
+    return 'Webhook received!', 200
 
 if __name__ == '__main__':
     # 웹소켓 스레드 시작
