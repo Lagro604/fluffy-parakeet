@@ -5,6 +5,8 @@ import logging
 import httpx
 from flask import Flask, request
 from threading import Thread
+from collections import deque
+import time
 
 app = Flask(__name__)
 
@@ -16,6 +18,7 @@ EXCLUDED_TRADE_THRESHOLD = 70000000  # 7천만 원
 BITCOIN_ORDERBOOK_THRESHOLD = 3000000000  # 30억 원
 EXCLUDED_COINS = ['KRW-SOL', 'KRW-ETH', 'KRW-SHIB', 'KRW-DOGE', 'KRW-USDT', 'KRW-XRP']
 recent_messages = set()  # 최근 메시지 중복 방지
+recent_trade_hashes = deque(maxlen=5000)  # 최근 처리한 거래 해시값을 저장 (최대 5,000개)
 logging.basicConfig(level=logging.DEBUG)  # 로그 레벨 설정
 
 async def send_telegram_message(message):
@@ -71,6 +74,7 @@ async def monitor_market():
 
     while True:
         logging.debug("Checking markets...")
+        current_time = time.time()  # 현재 시간 저장
         for market_id, coin_name in COIN_NAMES.items():
             if market_id == "KRW-BTC":
                 orderbook_data = await get_orderbook(market_id)
@@ -94,55 +98,50 @@ async def monitor_market():
                             msg_id = hashlib.md5(message.encode()).hexdigest()
                             if msg_id not in recent_messages:
                                 await send_telegram_message(message)
-                                recent_messages.add(msg_id)
+                                recent_messages.add(msg_id)  # 메시지 해시를 저장
 
                 continue
 
             recent_trades = await get_recent_trades(market_id)
             logging.debug(f"Recent trades for {market_id}: {recent_trades}")
             if isinstance(recent_trades, list) and recent_trades:
-                total_trade_value = 0
-
                 for trade in recent_trades:
                     trade_value = trade['trade_price'] * trade['trade_volume']
-                    total_trade_value += trade_value
                     trade_type = "매수" if trade['ask_bid'] == "BID" else "매도"
 
-                    if trade_value >= TRADE_THRESHOLD and market_id not in EXCLUDED_COINS:
-                        ticker_data = await get_ticker(market_id)
-                        current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                        yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                        change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
+                    # 거래 조건 확인
+                    if (trade_value >= TRADE_THRESHOLD and market_id not in EXCLUDED_COINS) or \
+                       (market_id in EXCLUDED_COINS and trade_value >= EXCLUDED_TRADE_THRESHOLD):
+                        # 해시값 생성
+                        trade_hash = hashlib.md5(f"{market_id}-{trade['timestamp']}-{trade_value}".encode()).hexdigest()
 
-                        message = (
-                            f"{trade_type} 알림: {market_id} ({coin_name})\n"
-                            f"최근 거래: {format_krw(trade_value)}\n"
-                            f"총 체결 금액: {format_krw(total_trade_value)}\n"
-                            f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
-                        )
-                        msg_id = hashlib.md5(message.encode()).hexdigest()
-                        if msg_id not in recent_messages:
+                        # 중복 메시지 방지
+                        if trade_hash not in recent_messages:
+                            # 메시지 전송 로직
+                            if market_id in EXCLUDED_COINS:
+                                message = (
+                                    f"제외 코인 알림: {market_id} ({coin_name})\n"
+                                    f"최근 거래: {format_krw(trade_value)}\n"
+                                    f"현재 가격: {format_krw(current_price)}\n"
+                                    f"전일 대비: {change_percentage:.2f}%"
+                                )
+                            else:
+                                message = (
+                                    f"{trade_type} 알림: {market_id} ({coin_name})\n"
+                                    f"최근 거래: {format_krw(trade_value)}\n"
+                                    f"현재 가격: {format_krw(current_price)}\n"
+                                    f"전일 대비: {change_percentage:.2f}%"
+                                )
+                           
                             await send_telegram_message(message)
-                            recent_messages.add(msg_id)
+                            recent_messages.add(trade_hash)  # 최근 처리한 거래 해시값 추가
+                            recent_trade_hashes.append(trade_hash)  # 해시값 저장
 
-                    elif trade_value >= EXCLUDED_TRADE_THRESHOLD and market_id in EXCLUDED_COINS:
-                        ticker_data = await get_ticker(market_id)
-                        current_price = ticker_data[0]['trade_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                        yesterday_price = ticker_data[0]['prev_closing_price'] if ticker_data and isinstance(ticker_data, list) else 0
-                        change_percentage = ((current_price - yesterday_price) / yesterday_price * 100) if yesterday_price else 0
+        # 15분마다 오래된 거래 해시값 제거
+        current_time = time.time()  # 현재 시간 재설정
+        recent_trade_hashes = deque((h, t) for h, t in recent_trade_hashes if current_time - t < 900)  # 900초(15분) 이상된 해시값 제거
 
-                        message = (
-                            f"{trade_type} 알림 (제외 코인): {market_id} ({coin_name})\n"
-                            f"최근 거래: {format_krw(trade_value)}\n"
-                            f"총 체결 금액: {format_krw(total_trade_value)}\n"
-                            f"현재 가격: {format_krw(current_price)}, 전일 대비: {change_percentage:.2f}%"
-                        )
-                        msg_id = hashlib.md5(message.encode()).hexdigest()
-                        if msg_id not in recent_messages:
-                            await send_telegram_message(message)
-                            recent_messages.add(msg_id)
-
-        await asyncio.sleep(9)  # 10초 대기
+        
 
 def run_async_monitor():
     asyncio.run(monitor_market())
