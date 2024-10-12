@@ -222,7 +222,7 @@ def health():
 def test():
     return "Test route is working!", 200
 
-@app.route('/your_webhook_endpoint', methods=['POST'])
+@app.route('/webhook', methods=['POST'])  # 여기를 /webhook으로 수정했습니다.
 def webhook():
     update = request.get_json()
     logger.info(f"Received update: {update}")  # 수신된 업데이트 로그 출력
@@ -234,11 +234,9 @@ def run_flask():
 def create_app():
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(s, loop)))
-    
-    loop.create_task(run_flask())
-    loop.create_task(run_websockets())
-    loop.run_forever()
+        loop.add_signal_handler(sig, lambda s=sig: asyncio.ensure_future(shutdown(s, loop)))
+    loop.run_until_complete(run_websockets())
 
-if __name__ == '__main__':
-    create_app()
+if __name__ == "__main__":
+    run_flask()
+
