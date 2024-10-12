@@ -36,7 +36,7 @@ async def get_orderbook(market_id):
         return None
 
 async def get_recent_trades(market_id):
-    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=15'  # 최근 거래 10개 요청
+    url = f'https://api.upbit.com/v1/trades/ticks?market={market_id}&count=20'  # 최근 거래 10개 요청
     async with httpx.AsyncClient() as client:
         response = await client.get(url)
         if response.status_code == 200:
