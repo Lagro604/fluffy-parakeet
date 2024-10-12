@@ -81,11 +81,14 @@ async def upbit_websocket():
             async with websockets.connect(uri) as websocket:
                 await websocket.send(json.dumps(subscribe_message))
                 logger.info("Upbit WebSocket connected and subscribed.")
+                logger.debug(f"Subscription message sent: {subscribe_message}")
 
                 while not shutdown_event.is_set():
                     try:
                         response = await asyncio.wait_for(websocket.recv(), timeout=30)
                         data = json.loads(response)
+
+                        logger.debug(f"Data received from Upbit WebSocket: {data}")
 
                         if data['type'] == 'ticker':
                             await process_upbit_ticker(data)
@@ -234,5 +237,5 @@ def create_app():
 # Gunicorn용 앱 객체
 application = create_app()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     run_flask()
