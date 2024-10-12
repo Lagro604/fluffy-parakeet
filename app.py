@@ -24,7 +24,7 @@ BINANCE_FUTURE_TRADE_THRESHOLD = 200000000
 PORT = int(os.getenv('PORT', 8080))
 
 recent_messages = {}
-MESSAGE_EXPIRATION_TIME = 7200
+MESSAGE_EXPIRATION_TIME = 10800
 coin_name_dict = {}
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
