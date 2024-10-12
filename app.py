@@ -27,6 +27,7 @@ recent_messages = {}
 MESSAGE_EXPIRATION_TIME = 10800
 coin_name_dict = {}
 
+# 로그 설정
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -237,5 +238,5 @@ def create_app():
 # Gunicorn용 앱 객체
 application = create_app()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     run_flask()
